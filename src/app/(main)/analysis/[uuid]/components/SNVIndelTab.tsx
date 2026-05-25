@@ -1,0 +1,487 @@
+'use client';
+
+import * as React from 'react';
+import { DataTable, Tag, Input } from '@schema/ui-kit';
+import type { Column } from '@schema/ui-kit';
+import { Search, ListFilter } from 'lucide-react';
+import type { SNVIndel, TableFilterState, PaginatedResult, TierClassification } from '../types';
+import { DEFAULT_FILTER_STATE } from '../types';
+import { getSNVIndels, TIER_CONFIG, getGeneLists, type GeneListOption } from '../mock-data';
+import { IGVViewer, PositionLink } from './IGVViewer';
+import { VariantDetailPanel } from './VariantDetailPanel';
+import { ReviewCheckbox, ReportCheckbox, ReviewColumnHeader, ReportColumnHeader } from './ReviewCheckboxes';
+
+interface SNVIndelTabProps {
+  taskId: string;
+  filterState?: TableFilterState;
+  onFilterChange?: (state: TableFilterState) => void;
+}
+
+export function SNVIndelTab({ 
+  taskId, 
+  filterState: externalFilterState,
+  onFilterChange 
+}: SNVIndelTabProps) {
+  const [internalFilterState, setInternalFilterState] = React.useState<TableFilterState>(DEFAULT_FILTER_STATE);
+  const [result, setResult] = React.useState<PaginatedResult<SNVIndel> | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [geneLists, setGeneLists] = React.useState<GeneListOption[]>([]);
+  const [reviewStatus, setReviewStatus] = React.useState<Record<string, { reviewed: boolean; reported: boolean }>>({});
+  
+  // IGV 查看器状态
+  const [igvState, setIgvState] = React.useState<{
+    isOpen: boolean;
+    chromosome: string;
+    position: number;
+  }>({ isOpen: false, chromosome: '', position: 0 });
+
+  // 详情面板状态
+  const [selectedVariant, setSelectedVariant] = React.useState<SNVIndel | null>(null);
+  const [detailPanelOpen, setDetailPanelOpen] = React.useState(false);
+
+  const filterState = externalFilterState ?? internalFilterState;
+  const setFilterState = onFilterChange ?? setInternalFilterState;
+
+  // 打开 IGV 查看器
+  const handleOpenIGV = React.useCallback((chromosome: string, position: number) => {
+    setIgvState({ isOpen: true, chromosome, position });
+  }, []);
+
+  // 关闭 IGV 查看器
+  const handleCloseIGV = React.useCallback(() => {
+    setIgvState(prev => ({ ...prev, isOpen: false }));
+  }, []);
+
+  // 点击行打开详情面板
+  const handleRowClick = React.useCallback((variant: SNVIndel) => {
+    setSelectedVariant(variant);
+    setDetailPanelOpen(true);
+  }, []);
+
+  // 关闭详情面板
+  const handleCloseDetailPanel = React.useCallback(() => {
+    setDetailPanelOpen(false);
+  }, []);
+
+  // 处理审核状态变更
+  const handleReviewChange = React.useCallback((id: string, checked: boolean) => {
+    setReviewStatus(prev => ({
+      ...prev,
+      [id]: { ...prev[id], reviewed: checked, reported: prev[id]?.reported ?? false }
+    }));
+  }, []);
+
+  // 处理回报状态变更
+  const handleReportChange = React.useCallback((id: string, checked: boolean) => {
+    setReviewStatus(prev => ({
+      ...prev,
+      [id]: { reviewed: prev[id]?.reviewed ?? false, reported: checked }
+    }));
+  }, []);
+
+  // 获取变异的审核状态
+  const getReviewState = React.useCallback((variant: SNVIndel) => {
+    return reviewStatus[variant.id] ?? { reviewed: variant.reviewed, reported: variant.reported };
+  }, [reviewStatus]);
+
+  // 按审核/回报状态排序的数据
+  const sortedData = React.useMemo(() => {
+    if (!result?.data) return [];
+    return [...result.data].sort((a, b) => {
+      const stateA = getReviewState(a);
+      const stateB = getReviewState(b);
+      // 回报的排最前
+      if (stateA.reported !== stateB.reported) {
+        return stateA.reported ? -1 : 1;
+      }
+      // 审核的排其次
+      if (stateA.reviewed !== stateB.reviewed) {
+        return stateA.reviewed ? -1 : 1;
+      }
+      return 0;
+    });
+  }, [result?.data, getReviewState]);
+
+  // 加载基因列表
+  React.useEffect(() => {
+    async function loadGeneLists() {
+      const lists = await getGeneLists();
+      setGeneLists(lists);
+    }
+    loadGeneLists();
+  }, []);
+
+  // 加载数据
+  React.useEffect(() => {
+    async function loadData() {
+      setLoading(true);
+      const data = await getSNVIndels(taskId, filterState);
+      setResult(data);
+      setLoading(false);
+    }
+    loadData();
+  }, [taskId, filterState]);
+
+  // 处理搜索
+  const handleSearch = React.useCallback((query: string) => {
+    setFilterState({ ...filterState, searchQuery: query, page: 1 });
+  }, [filterState, setFilterState]);
+
+  // 处理排序
+  const handleSortChange = React.useCallback((column: string, direction: 'asc' | 'desc' | null) => {
+    setFilterState({
+      ...filterState,
+      sortColumn: direction ? column : undefined,
+      sortDirection: direction ?? undefined,
+    });
+  }, [filterState, setFilterState]);
+
+  // 处理Tier筛选
+  const handleTierFilter = React.useCallback((tier: TierClassification | '') => {
+    const newFilters = { ...filterState.filters };
+    if (tier) {
+      newFilters.clinicalSignificance = tier;
+    } else {
+      delete newFilters.clinicalSignificance;
+    }
+    setFilterState({ ...filterState, filters: newFilters, page: 1 });
+  }, [filterState, setFilterState]);
+
+  // 处理基因列表筛选
+  const handleGeneListFilter = React.useCallback((geneListId: string) => {
+    setFilterState({ 
+      ...filterState, 
+      geneListId: geneListId || undefined, 
+      page: 1 
+    });
+  }, [filterState, setFilterState]);
+
+  // 获取当前选中的基因列表信息
+  const selectedGeneList = React.useMemo(() => {
+    if (!filterState.geneListId) return null;
+    return geneLists.find(list => list.id === filterState.geneListId);
+  }, [filterState.geneListId, geneLists]);
+
+  // 获取突变类型标签
+  const getTypeVariant = (type: string): 'info' | 'warning' | 'danger' | 'success' => {
+    switch (type) {
+      case 'SNV': return 'info';
+      case 'Insertion': return 'success';
+      case 'Deletion': return 'danger';
+      case 'Complex': return 'warning';
+      default: return 'info';
+    }
+  };
+
+  // 列定义 (NCCL规范)
+  const columns: Column<SNVIndel>[] = [
+    {
+      id: 'reviewed',
+      header: <ReviewColumnHeader />,
+      accessor: (row) => {
+        const state = getReviewState(row);
+        return (
+          <ReviewCheckbox
+            checked={state.reviewed}
+            onChange={(checked) => handleReviewChange(row.id, checked)}
+          />
+        );
+      },
+      width: 60,
+    },
+    {
+      id: 'reported',
+      header: <ReportColumnHeader />,
+      accessor: (row) => {
+        const state = getReviewState(row);
+        return (
+          <ReportCheckbox
+            checked={state.reported}
+            onChange={(checked) => handleReportChange(row.id, checked)}
+          />
+        );
+      },
+      width: 60,
+    },
+    {
+      id: 'chr',
+      header: 'Chr',
+      accessor: (row) => row.chromosome.replace('chr', ''),
+      width: 50,
+    },
+    {
+      id: 'start',
+      header: 'Start',
+      accessor: (row) => (
+        <PositionLink
+          chromosome={row.chromosome.startsWith('chr') ? row.chromosome : `chr${row.chromosome}`}
+          position={row.start ?? row.position}
+          label={String(row.start ?? row.position)}
+          onClick={handleOpenIGV}
+        />
+      ),
+      width: 100,
+      sortable: true,
+    },
+    {
+      id: 'end',
+      header: 'End',
+      accessor: (row) => {
+        if (row.variantType === 'Insertion') return '-';
+        const endPos = row.end ?? row.position;
+        return endPos < 0 ? '-' : String(endPos);
+      },
+      width: 100,
+    },
+    {
+      id: 'ref',
+      header: 'Ref',
+      accessor: (row) => (
+        <span className="font-mono text-xs break-all whitespace-normal">
+          {row.ref}
+        </span>
+      ),
+      width: 100,
+    },
+    {
+      id: 'alt',
+      header: 'Alt',
+      accessor: (row) => (
+        <span className="font-mono text-xs break-all whitespace-normal">
+          {row.alt}
+        </span>
+      ),
+      width: 100,
+    },
+    {
+      id: 'gene',
+      header: 'Gene',
+      accessor: 'gene',
+      width: 70,
+      sortable: true,
+    },
+    {
+      id: 'type',
+      header: 'Type',
+      accessor: (row) => (
+        <Tag variant={getTypeVariant(row.variantType)}>
+          {row.variantType}
+        </Tag>
+      ),
+      width: 90,
+    },
+    {
+      id: 'transcript',
+      header: 'Transcript',
+      accessor: (row) => (
+        <span className="text-xs break-all whitespace-normal">{row.transcript}</span>
+      ),
+      width: 120,
+    },
+    {
+      id: 'cHGVS',
+      header: 'cHGVS',
+      accessor: (row) => (
+        <span className="font-mono text-xs break-all whitespace-normal">{row.hgvsc}</span>
+      ),
+      width: 150,
+    },
+    {
+      id: 'pHGVS',
+      header: 'pHGVS',
+      accessor: (row) => (
+        <span className="font-mono text-xs break-all whitespace-normal">{row.hgvsp}</span>
+      ),
+      width: 130,
+    },
+    {
+      id: 'vaf',
+      header: 'VAF%',
+      accessor: (row) => `${(row.alleleFrequency * 100).toFixed(2)}`,
+      width: 70,
+      sortable: true,
+    },
+    {
+      id: 'consequence',
+      header: 'Consequence',
+      accessor: (row) => (
+        <span className="text-xs break-all whitespace-normal">{row.consequence}</span>
+      ),
+      width: 120,
+    },
+    {
+      id: 'affectedExon',
+      header: 'Affected_Exon',
+      accessor: (row) => {
+        const value = row.affectedExon ?? '-';
+        // 检测非外显子区域：内含子、启动子、UTR等
+        const isIntron = /intron|IVS/i.test(value);
+        const isPromoter = /promoter|upstream/i.test(value);
+        const isUTR = /UTR|5'|3'/i.test(value);
+        const isNonExonic = isIntron || isPromoter || isUTR || value === '-';
+        
+        if (isNonExonic && value !== '-') {
+          let bgColor = 'bg-neutral-subtle';
+          let textColor = 'text-fg-muted';
+          
+          if (isIntron) {
+            bgColor = 'bg-attention-subtle';
+            textColor = 'text-attention-fg';
+          } else if (isPromoter) {
+            bgColor = 'bg-accent-subtle';
+            textColor = 'text-accent-fg';
+          } else if (isUTR) {
+            bgColor = 'bg-done-subtle';
+            textColor = 'text-done-fg';
+          }
+          
+          return (
+            <span className={`px-1.5 py-0.5 rounded text-xs ${bgColor} ${textColor}`}>
+              {value}
+            </span>
+          );
+        }
+        
+        return <span className="text-xs">{value}</span>;
+      },
+      width: 110,
+    },
+    {
+      id: 'clinicalSignificance',
+      header: '临床意义',
+      accessor: (row) => {
+        const config = TIER_CONFIG[row.clinicalSignificance];
+        return <Tag variant={config.variant}>{config.label}</Tag>;
+      },
+      width: 90,
+      sortable: true,
+    },
+  ];
+
+  // 分页信息
+  const totalPages = result ? Math.ceil(result.total / result.pageSize) : 0;
+
+  return (
+    <div>
+      {/* 工具栏 */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-4">
+          {/* 搜索框 */}
+          <div className="w-64">
+            <Input
+              placeholder="搜索基因、位置..."
+              value={filterState.searchQuery}
+              onChange={(e) => handleSearch(e.target.value)}
+              leftElement={<Search className="w-4 h-4" />}
+            />
+          </div>
+
+          {/* 基因列表筛选 */}
+          <div className="relative">
+            <ListFilter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-fg-muted pointer-events-none" />
+            <select
+              value={filterState.geneListId || ''}
+              onChange={(e) => handleGeneListFilter(e.target.value)}
+              className="pl-9 pr-3 py-1.5 text-sm border border-border-default rounded-md bg-canvas-default text-fg-default min-w-[180px] appearance-none cursor-pointer"
+            >
+              <option value="">全部基因</option>
+              {geneLists.map((list) => (
+                <option key={list.id} value={list.id}>
+                  {list.name} ({list.geneCount})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Tier筛选 */}
+          <select
+            value={(filterState.filters.clinicalSignificance as string) || ''}
+            onChange={(e) => handleTierFilter(e.target.value as TierClassification | '')}
+            className="px-3 py-1.5 text-sm border border-border-default rounded-md bg-canvas-default text-fg-default"
+          >
+            <option value="">全部临床意义</option>
+            {Object.entries(TIER_CONFIG).map(([key, config]) => (
+              <option key={key} value={key}>{config.label}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* 统计信息 */}
+        <div className="flex items-center gap-4 text-sm text-fg-muted">
+          {selectedGeneList && (
+            <span className="text-accent-fg">
+              已筛选: {selectedGeneList.name}
+            </span>
+          )}
+          <span>共 {result?.total ?? 0} 条变异</span>
+        </div>
+      </div>
+
+      {/* 数据表格 */}
+      {loading ? (
+        <div className="flex items-center justify-center py-12">
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-accent-emphasis" />
+        </div>
+      ) : result && result.data.length > 0 ? (
+        <>
+          <DataTable
+            data={sortedData}
+            columns={columns}
+            rowKey="id"
+            striped
+            density="compact"
+            sortColumn={filterState.sortColumn}
+            sortDirection={filterState.sortDirection}
+            onSortChange={handleSortChange}
+            onRowClick={handleRowClick}
+          />
+
+          {/* 分页 */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between mt-4">
+              <div className="text-sm text-fg-muted">
+                第 {filterState.page} / {totalPages} 页
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setFilterState({ ...filterState, page: filterState.page - 1 })}
+                  disabled={filterState.page <= 1}
+                  className="px-3 py-1 text-sm border border-border-default rounded hover:bg-canvas-subtle disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  上一页
+                </button>
+                <button
+                  onClick={() => setFilterState({ ...filterState, page: filterState.page + 1 })}
+                  disabled={filterState.page >= totalPages}
+                  className="px-3 py-1 text-sm border border-border-default rounded hover:bg-canvas-subtle disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="text-center py-12 text-fg-muted">
+          暂无SNV/Indel变异数据
+        </div>
+      )}
+
+      {/* IGV 查看器 */}
+      <IGVViewer
+        chromosome={igvState.chromosome}
+        position={igvState.position}
+        isOpen={igvState.isOpen}
+        onClose={handleCloseIGV}
+      />
+
+      {/* 变异详情面板 */}
+      <VariantDetailPanel
+        variant={selectedVariant}
+        isOpen={detailPanelOpen}
+        onClose={handleCloseDetailPanel}
+        onOpenIGV={handleOpenIGV}
+      />
+    </div>
+  );
+}
