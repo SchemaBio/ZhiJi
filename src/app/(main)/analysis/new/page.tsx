@@ -4,7 +4,6 @@ import * as React from 'react';
 import { PageContent } from '@/components/layout';
 import { Button, Input, Select, FormItem, Checkbox } from '@schema/ui-kit';
 import { Play, Info } from 'lucide-react';
-import { generateUUID } from '@/lib/uuid';
 
 interface SampleOption {
   id: string;
@@ -30,7 +29,7 @@ const mockPipelines = [
 ];
 
 export default function NewAnalysisPage() {
-  const [taskId] = React.useState(() => generateUUID());
+  const [taskId] = React.useState(() => crypto.randomUUID());
   const [selectedSample, setSelectedSample] = React.useState('');
   const [selectedPipeline, setSelectedPipeline] = React.useState('single-sample');
   const [taskName, setTaskName] = React.useState('');

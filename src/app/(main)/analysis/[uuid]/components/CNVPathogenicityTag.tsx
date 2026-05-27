@@ -85,21 +85,3 @@ export function CNVPathogenicityTag({
     </Tooltip>
   );
 }
-
-/**
- * 简化版致病性标签（仅显示分类，无交互）
- */
-export function CNVPathogenicityBadge({
-  classification,
-}: {
-  classification: ClinGenClassification;
-}) {
-  const variant = getClassificationVariant(classification);
-  const label = getClassificationLabel(classification);
-
-  return (
-    <Tag variant={variant}>
-      {label}
-    </Tag>
-  );
-}

@@ -30,7 +30,7 @@ export interface SidebarNavItem {
   children?: SidebarNavItem[];
 }
 
-export interface SidebarNavConfig {
+interface SidebarNavConfig {
   dashboard: SidebarNavItem[];
   samples: SidebarNavItem[];
   analysis: SidebarNavItem[];

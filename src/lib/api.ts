@@ -31,7 +31,7 @@ function clearAuthTokens() {
   localStorage.removeItem(STORAGE_KEYS.CURRENT_ORG);
 }
 
-export { ApiError, getAuthToken, setAuthTokens, clearAuthTokens };
+export { ApiError, setAuthTokens, clearAuthTokens };
 
 function getCookie(name: string): string | null {
   if (typeof document === 'undefined') return null;
@@ -157,42 +157,6 @@ async function request<T>(
   const json = await response.json();
   // Backend wraps all responses as { data: T }
   return json?.data ?? json;
-}
-
-// COS presigned URL upload flow
-export interface PresignedUploadResult {
-  file_id: number;
-  upload_url: string;
-  storage_key: string;
-  storage_type: string;
-}
-
-export async function requestPresignedUploadUrl(filename: string, fileSize: number) {
-  const res = await api.post<PresignedUploadResult>('/v1/files/presigned-url', { filename, file_size: fileSize });
-  return res;
-}
-
-export async function uploadToCOS(presignedUrl: string, file: File, onProgress?: (pct: number) => void) {
-  return new Promise<void>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('PUT', presignedUrl);
-    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable && onProgress) {
-        onProgress(Math.round((e.loaded / e.total) * 100));
-      }
-    };
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) resolve();
-      else reject(new Error(`COS upload failed: ${xhr.status}`));
-    };
-    xhr.onerror = () => reject(new Error('COS upload network error'));
-    xhr.send(file);
-  });
-}
-
-export async function confirmUpload(fileId: number) {
-  return api.post(`/v1/files/${fileId}/confirm`);
 }
 
 export const api = {

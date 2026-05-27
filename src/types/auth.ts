@@ -1,8 +1,5 @@
 import type { User, UserOrganizationInfo } from './user';
 
-// 用户信息 (legacy compatibility)
-export type UserRole = 'ADMIN' | 'DOCTOR' | 'ANALYST' | 'VIEWER';
-
 // 登录请求
 export interface LoginRequest {
   email: string;
@@ -31,7 +28,3 @@ export interface RefreshTokenResponse {
   expiresAt: string;
 }
 
-// Switch organization request
-export interface SwitchOrganizationRequest {
-  orgId: string;
-}

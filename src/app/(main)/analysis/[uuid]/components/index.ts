@@ -23,6 +23,6 @@ export { CNVChromDetailPanel } from './CNVChromDetailPanel';
 export { ReviewCheckbox, ReportCheckbox, ReviewColumnHeader, ReportColumnHeader } from './ReviewCheckboxes';
 
 // CNV 致病性评估组件
-export { CNVPathogenicityTag, CNVPathogenicityBadge } from './CNVPathogenicityTag';
+export { CNVPathogenicityTag } from './CNVPathogenicityTag';
 export { CNVAssessmentPanel } from './CNVAssessmentPanel';
 export * from './assessment';

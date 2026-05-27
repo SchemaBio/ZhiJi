@@ -3,7 +3,6 @@
 import { Button, Input, Tag } from '@schema/ui-kit';
 import { Plus, Search, Trash2, Check, Upload, Play, Square, RotateCcw, Pencil, X } from 'lucide-react';
 import * as React from 'react';
-import { generateUUID } from '@/lib/uuid';
 
 interface BaselineFile {
   id: string;
@@ -657,7 +656,7 @@ export default function BaselineManagementPage() {
   const handleCreateBaseline = (data: { bedFile: string; description: string; sampleIds: string[] }) => {
     const newBaseline: BaselineFile = {
       id: String(Date.now()),
-      uuid: generateUUID(),
+      uuid: crypto.randomUUID(),
       sampleCount: data.sampleIds.length,
       bedFile: data.bedFile,
       description: data.description || `检测基线`,

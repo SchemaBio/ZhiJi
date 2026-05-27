@@ -45,32 +45,3 @@ export function useMediaQuery(query: string): boolean {
   return matches;
 }
 
-/**
- * Predefined breakpoint hooks for common responsive patterns.
- */
-export function useIsMobile(): boolean {
-  return useMediaQuery('(max-width: 767px)');
-}
-
-export function useIsTablet(): boolean {
-  return useMediaQuery('(min-width: 768px) and (max-width: 1279px)');
-}
-
-export function useIsDesktop(): boolean {
-  return useMediaQuery('(min-width: 1280px)');
-}
-
-/**
- * Returns the current responsive mode.
- * SSR-safe: defaults to 'desktop' during server-side rendering.
- */
-export type ResponsiveMode = 'mobile' | 'tablet' | 'desktop';
-
-export function useResponsiveMode(): ResponsiveMode {
-  const isMobile = useMediaQuery('(max-width: 767px)');
-  const isTablet = useMediaQuery('(min-width: 768px) and (max-width: 1279px)');
-
-  if (isMobile) return 'mobile';
-  if (isTablet) return 'tablet';
-  return 'desktop';
-}
