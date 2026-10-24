@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { Button, Input } from '@schema/ui-kit';
@@ -37,7 +38,8 @@ export default function LoginPage() {
 
     try {
       await login(email, password);
-      router.push('/dashboard');
+      const next = new URLSearchParams(window.location.search).get('next');
+      router.push(next && next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard');
     } catch (err) {
       if (err instanceof ApiError) {
         const data = err.data as { error?: string } | null;
@@ -66,10 +68,10 @@ export default function LoginPage() {
         <div className="relative z-10 flex items-center justify-center">
           <div className="text-left">
             <h1 className="text-2xl xl:text-3xl font-bold text-black tracking-wide leading-tight">
-              Open Source<br />Genetic Exploration
+              知几<br />肿瘤基因组分析
             </h1>
             <p className="text-2xl xl:text-3xl font-bold text-black tracking-wide mt-2">
-              Somatic
+              Loligo
             </p>
           </div>
         </div>
@@ -154,9 +156,9 @@ export default function LoginPage() {
                 />
                 <span className="text-fg-muted">记住我</span>
               </label>
-              <button type="button" className="text-accent-fg hover:underline">
+              <Link href="/forgot-password" className="text-accent-fg hover:underline">
                 忘记密码？
-              </button>
+              </Link>
             </div>
 
             {/* 登录按钮 */}
@@ -170,6 +172,11 @@ export default function LoginPage() {
               {loading ? '登录中...' : '登录'}
             </Button>
           </form>
+          <p className="mt-4 text-center text-sm text-fg-muted">
+            还没有账号？ <Link href="/register" className="text-accent-fg hover:underline">注册</Link>
+            {' · '}
+            <Link href="/privacy" className="text-accent-fg hover:underline">隐私说明</Link>
+          </p>
 
           {/* 移动端底部信息 */}
           <p className="lg:hidden text-center text-xs text-fg-muted mt-8">

@@ -1,30 +1,36 @@
 import type { Metadata } from 'next';
-import Script from 'next/script';
+import { headers } from 'next/headers';
 import { AppProviders } from '@/components/providers/AppProviders';
+import { getRequestLocale } from '@/i18n/server';
+import { createTextTranslator } from '@/i18n/text';
 import './globals.css';
 
-export const metadata: Metadata = {
-  title: '知几',
-  description: '专业的肿瘤基因组分析系统',
-  keywords: ['基因组分析', '肿瘤', '体细胞突变', '变异分析', '癌症'],
-  icons: {
-    icon: '/logo.png',
-    apple: '/logo.png',
-  },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = createTextTranslator(await getRequestLocale());
+  return {
+    title: t('common.appName'),
+    description: t('common.appDescription'),
+    icons: {
+      icon: '/logo.png',
+      apple: '/logo.png',
+    },
+  };
+}
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export const dynamic = 'force-dynamic';
+
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const headersList = await headers();
+  const nonce = headersList.get('x-nonce') ?? undefined;
+  const locale = await getRequestLocale();
+
   return (
-    <html lang="zh-CN" suppressHydrationWarning>
+    <html lang={locale} suppressHydrationWarning>
       <head>
-        <Script src="/runtime-config.js" strategy="beforeInteractive" />
+        <script nonce={nonce} src="/runtime-config.js" suppressHydrationWarning />
       </head>
       <body>
-        <AppProviders>{children}</AppProviders>
+        <AppProviders locale={locale}>{children}</AppProviders>
       </body>
     </html>
   );

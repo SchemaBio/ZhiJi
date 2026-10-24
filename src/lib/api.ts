@@ -1,9 +1,14 @@
+import { LocalizedError } from '@/i18n/errors';
 import { STORAGE_KEYS } from './storage';
-import { getRuntimeApiBaseUrl } from './runtime-config';
+import { getRuntimeApiBaseUrl, getRuntimeBackendFlavor, getRuntimeCoreApiPrefix, getRuntimeUploadOrigins } from './runtime-config';
 
 interface RequestOptions extends RequestInit {
   params?: Record<string, string>;
+  /** Internal escape hatch for Gateway-only endpoints that must not be routed through Onykia's Loligo proxy. */
+  coreApi?: boolean;
 }
+
+export type ApiSignalOptions = Pick<RequestOptions, 'signal'>;
 
 class ApiError extends Error {
   constructor(
@@ -11,27 +16,36 @@ class ApiError extends Error {
     public statusText: string,
     public data?: unknown
   ) {
-    super(`API Error: ${status} ${statusText}`);
+    super(ApiError.messageFor(status, statusText, data));
     this.name = 'ApiError';
+  }
+
+  private static messageFor(status: number, statusText: string, data?: unknown): string {
+    if (data && typeof data === 'object') {
+      const payload = data as { error?: unknown; message?: unknown; detail?: unknown };
+      for (const value of [payload.error, payload.message, payload.detail]) {
+        if (typeof value === 'string' && value.trim()) return value.trim();
+      }
+    }
+    if (typeof data === 'string' && data.trim()) return data.trim();
+    return `API Error: ${status} ${statusText}`;
   }
 }
 
-function getAuthToken(): string | null {
-  return null;
+function clearLegacyAuthTokens() {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(STORAGE_KEYS.LEGACY_AUTH_TOKENS);
 }
 
-function setAuthTokens(_accessToken: string, _refreshToken: string, _expiresAt?: string) {
-  localStorage.removeItem(STORAGE_KEYS.TOKENS);
-}
-
-function clearAuthTokens() {
-  localStorage.removeItem(STORAGE_KEYS.TOKENS);
+function clearAuthSession() {
+  if (typeof window === 'undefined') return;
+  clearLegacyAuthTokens();
   localStorage.removeItem(STORAGE_KEYS.USER);
   localStorage.removeItem(STORAGE_KEYS.ORGANIZATIONS);
   localStorage.removeItem(STORAGE_KEYS.CURRENT_ORG);
 }
 
-export { ApiError, setAuthTokens, clearAuthTokens };
+export { ApiError, clearLegacyAuthTokens, clearAuthSession };
 
 function getCookie(name: string): string | null {
   if (typeof document === 'undefined') return null;
@@ -40,7 +54,12 @@ function getCookie(name: string): string | null {
     .split(';')
     .map(part => part.trim())
     .find(part => part.startsWith(prefix));
-  return item ? decodeURIComponent(item.slice(prefix.length)) : null;
+  if (!item) return null;
+  try {
+    return decodeURIComponent(item.slice(prefix.length));
+  } catch {
+    return null;
+  }
 }
 
 function isUnsafeMethod(method?: string): boolean {
@@ -48,7 +67,132 @@ function isUnsafeMethod(method?: string): boolean {
   return !['GET', 'HEAD', 'OPTIONS'].includes(normalized);
 }
 
-// Refresh lock: prevents concurrent token refresh calls
+const CORE_API_PREFIX_FALLBACK = '/v1/loligo';
+const CORE_API_ROOTS = [
+  'ai-assistance',
+  'tasks',
+  'samples',
+  'pipelines',
+  'templates',
+  'report-templates',
+  'gene-lists',
+  'archive',
+  'history',
+  'dashboard',
+  'projects',
+  'pedigrees',
+  'upload',
+  'data',
+	'cnv-baselines',
+];
+
+function decodePathSegment(segment: string): string | null {
+  let decoded = segment;
+  for (let i = 0; i < 3; i += 1) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) return decoded;
+      decoded = next;
+    } catch {
+      return null;
+    }
+  }
+  return decoded;
+}
+
+function hasUnsafeEndpointPathSegment(endpoint: string): boolean {
+  for (const segment of endpoint.split('/').filter(Boolean)) {
+    const decoded = decodePathSegment(segment);
+    if (
+      decoded === null ||
+      decoded === '.' ||
+      decoded === '..' ||
+      decoded.includes('/') ||
+      decoded.includes('\\') ||
+      /[\u0000-\u001f\u007f]/.test(decoded)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function assertRelativeAPIEndpoint(endpoint: string): string {
+  if (!endpoint.startsWith('/')) {
+    throw new Error(`API endpoint must start with "/": ${endpoint}`);
+  }
+  if (
+    endpoint.startsWith('//') ||
+    endpoint.includes('\\') ||
+    /[\u0000-\u001f]/.test(endpoint) ||
+    /[?#]/.test(endpoint) ||
+    /^[a-z][a-z0-9+.-]*:/i.test(endpoint) ||
+    hasUnsafeEndpointPathSegment(endpoint)
+  ) {
+    throw new Error(`API endpoint must be relative: ${endpoint}`);
+  }
+  return endpoint;
+}
+
+function isCoreEndpoint(endpoint: string): boolean {
+  const normalized = assertRelativeAPIEndpoint(endpoint);
+  return CORE_API_ROOTS.some(root => normalized === `/v1/${root}` || normalized.startsWith(`/v1/${root}/`));
+}
+
+function withCorePrefix(endpoint: string, prefix = getRuntimeCoreApiPrefix(), coreApi = true): string {
+  const normalized = assertRelativeAPIEndpoint(endpoint);
+  if (coreApi === false) return normalized;
+  if (!prefix || !isCoreEndpoint(normalized)) return normalized;
+  const cleanPrefix = prefix.replace(/\/+$/, '');
+  return `${cleanPrefix}${normalized.replace(/^\/v1(?=\/|$)/, '')}`;
+}
+
+function shouldRetryViaOnykiaLoligo(endpoint: string, response: Response, coreApi?: boolean): boolean {
+  const backendFlavor = getRuntimeBackendFlavor();
+  return response.status === 404
+    && coreApi !== false
+    && backendFlavor !== 'loligo'
+    && !getRuntimeCoreApiPrefix()
+    // This compatibility branch is unreachable with the canonical explicit
+    // backend configuration, but remains defensive for stale runtime files.
+    && isCoreEndpoint(endpoint);
+}
+
+function appendQuery(url: string, params?: Record<string, string>): string {
+  if (!params || Object.keys(params).length === 0) return url;
+  const searchParams = new URLSearchParams(params);
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}${searchParams.toString()}`;
+}
+
+function buildURL(endpoint: string, params?: Record<string, string>, prefix?: string, coreApi = true): string {
+  return appendQuery(`${getRuntimeApiBaseUrl()}${withCorePrefix(endpoint, prefix, coreApi)}`, params);
+}
+
+// For authenticated streaming libraries that issue their own range requests.
+export function apiResourceURL(endpoint: string, params?: Record<string, string>): string {
+  return buildURL(endpoint, params);
+}
+
+async function parseJSONBody(response: Response): Promise<unknown> {
+  if (response.status === 204) return undefined;
+  const text = await response.text();
+  if (!text) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+function unwrapResponse<T>(json: unknown): T {
+  if (json && typeof json === 'object' && 'data' in json) {
+    return (json as { data?: T }).data as T;
+  }
+  return json as T;
+}
+
+// Refresh lock: prevents concurrent cookie-backed session refresh calls.
 let refreshPromise: Promise<boolean> | null = null;
 
 async function tryRefreshToken(): Promise<boolean> {
@@ -59,21 +203,24 @@ async function tryRefreshToken(): Promise<boolean> {
     try {
       const response = await fetch(`${getRuntimeApiBaseUrl()}/v1/auth/refresh`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(getCookie('csrf_token') ? { 'X-CSRF-Token': getCookie('csrf_token') as string } : {}),
+        },
         credentials: 'include',
         body: JSON.stringify({}),
       });
 
       if (!response.ok) {
-        clearAuthTokens();
+        clearAuthSession();
         return false;
       }
 
-      const json = await response.json();
-      const data = json?.data ?? json;
-      setAuthTokens(data.access_token, data.refresh_token, data.expires_at);
+      await response.json().catch(() => null);
+      clearLegacyAuthTokens();
       return true;
     } catch {
+      clearAuthSession();
       return false;
     } finally {
       refreshPromise = null;
@@ -83,80 +230,600 @@ async function tryRefreshToken(): Promise<boolean> {
   return refreshPromise;
 }
 
+// These endpoints either establish, rotate, or deliberately invalidate a
+// session. Retrying them through the refresh flow would create loops or cause
+// an unauthenticated request to be replayed with a different intent. Protected
+// auth endpoints such as /v1/auth/me remain eligible for refresh.
+function shouldAttemptAuthRefresh(endpoint: string): boolean {
+  return ![
+    '/v1/auth/login',
+    '/v1/auth/register',
+    '/v1/auth/registration-config',
+    '/v1/auth/registration/resend',
+    '/v1/auth/registration/verify',
+    '/v1/auth/refresh',
+    '/v1/auth/logout',
+    '/v1/auth/forgot-password',
+    '/v1/auth/reset-password',
+  ].includes(endpoint);
+}
+
 async function request<T>(
   endpoint: string,
   options: RequestOptions = {}
 ): Promise<T> {
-  const { params, ...init } = options;
+  const { params, coreApi, ...init } = options;
+  const url = buildURL(endpoint, params, undefined, coreApi);
 
-  let url = `${getRuntimeApiBaseUrl()}${endpoint}`;
-  if (params) {
-    const searchParams = new URLSearchParams(params);
-    url += `?${searchParams.toString()}`;
+  const headers = new Headers(init.headers);
+  if (init.body !== undefined && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
   }
 
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-    ...init.headers,
-  };
-
-  const token = getAuthToken();
-  if (token) {
-    (headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
-  }
   if (isUnsafeMethod(init.method)) {
     const csrfToken = getCookie('csrf_token');
     if (csrfToken) {
-      (headers as Record<string, string>)['X-CSRF-Token'] = csrfToken;
+      headers.set('X-CSRF-Token', csrfToken);
     }
   }
 
-  const response = await fetch(url, {
+  let response = await fetch(url, {
     ...init,
     headers,
     credentials: init.credentials ?? 'include',
   });
 
-  // Auto-refresh on 401 (skip for auth endpoints to avoid loops)
-  if (response.status === 401 && !endpoint.startsWith('/v1/auth/')) {
+  if (shouldRetryViaOnykiaLoligo(endpoint, response, coreApi)) {
+    response = await fetch(buildURL(endpoint, params, CORE_API_PREFIX_FALLBACK), {
+      ...init,
+      headers,
+      credentials: init.credentials ?? 'include',
+    });
+  }
+
+  // Auto-refresh on 401. The current-user endpoint is itself under /v1/auth/
+  // and must be eligible: it is the first request made after a page reload and
+  // otherwise an expired access token looks like a logged-out session even when
+  // the refresh token is still valid.
+  if (response.status === 401 && shouldAttemptAuthRefresh(endpoint)) {
     const refreshed = await tryRefreshToken();
     if (refreshed) {
-      // Retry with new token
-      const newToken = getAuthToken();
-      if (newToken) {
-        (headers as Record<string, string>)['Authorization'] = `Bearer ${newToken}`;
-      }
-      const retryResponse = await fetch(url, {
+      response = await fetch(url, {
         ...init,
         headers,
         credentials: init.credentials ?? 'include',
       });
-      if (!retryResponse.ok) {
-        const retryData = await retryResponse.json().catch(() => null);
-        throw new ApiError(retryResponse.status, retryResponse.statusText, retryData);
+      if (shouldRetryViaOnykiaLoligo(endpoint, response, coreApi)) {
+        response = await fetch(buildURL(endpoint, params, CORE_API_PREFIX_FALLBACK), {
+          ...init,
+          headers,
+          credentials: init.credentials ?? 'include',
+        });
       }
-      if (retryResponse.status === 204) return undefined as T;
-      const retryJson = await retryResponse.json();
-      return retryJson?.data ?? retryJson;
+    } else {
+      // Refresh failed; trigger logout by dispatching event.
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('schema:auth-expired'));
+      }
+      throw new ApiError(401, 'Unauthorized', { error: 'Token expired and refresh failed' });
     }
-    // Refresh failed — trigger logout by dispatching event
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('schema:auth-expired'));
-    }
-    throw new ApiError(401, 'Unauthorized', { error: 'Token expired and refresh failed' });
   }
 
   if (!response.ok) {
-    const data = await response.json().catch(() => null);
+    const data = await parseJSONBody(response);
+    if (response.status === 403 && data && typeof data === 'object' && (data as { code?: string }).code === 'permission_denied' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('schema:permissions-changed'));
+      throw new LocalizedError('permissions.denied');
+    }
     throw new ApiError(response.status, response.statusText, data);
   }
 
   // 204 No Content
   if (response.status === 204) return undefined as T;
 
-  const json = await response.json();
-  // Backend wraps all responses as { data: T }
-  return json?.data ?? json;
+  // Backend wraps most responses as { data: T }; keep raw JSON compatible too.
+  return unwrapResponse<T>(await parseJSONBody(response));
+}
+
+
+export interface DownloadResult {
+  blob: Blob;
+  filename: string;
+  contentType: string;
+}
+
+function filenameFromContentDisposition(contentDisposition: string | null): string {
+  if (!contentDisposition) return '';
+  const filenameStar = contentDisposition.match(/filename\*=([^;]+)/i)?.[1]?.trim();
+  if (filenameStar) {
+    const value = filenameStar.replace(/^UTF-8''/i, '').replace(/^"|"$/g, '');
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
+    }
+  }
+  const filename = contentDisposition.match(/filename=([^;]+)/i)?.[1]?.trim();
+  return filename ? filename.replace(/^"|"$/g, '') : '';
+}
+
+function sanitizeFilename(name: string, fallback: string): string {
+  const clean = (value: string) => value
+    .trim()
+    .replace(/[\\/]/g, '-')
+    .replace(/[\u0000-\u001f\u007f]/g, '');
+  const cleaned = clean(name);
+  if (cleaned && cleaned !== '.' && cleaned !== '..') return cleaned;
+  const cleanedFallback = clean(fallback);
+  return cleanedFallback && cleanedFallback !== '.' && cleanedFallback !== '..'
+    ? cleanedFallback
+    : 'download.bin';
+}
+
+async function errorData(response: Response): Promise<unknown> {
+  const data = await parseJSONBody(response).catch(() => null);
+  return typeof data === 'string' ? { error: data } : data;
+}
+
+async function requestDownload(
+  endpoint: string,
+  options: RequestOptions = {},
+  fallbackFilename = 'download.bin'
+): Promise<DownloadResult> {
+  const { params, coreApi, ...init } = options;
+  const url = buildURL(endpoint, params, undefined, coreApi);
+
+  const headers = new Headers(init.headers);
+  if (init.body !== undefined && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  if (isUnsafeMethod(init.method)) {
+    const csrfToken = getCookie('csrf_token');
+    if (csrfToken) {
+      headers.set('X-CSRF-Token', csrfToken);
+    }
+  }
+
+  const doFetch = (requestURL = url) => fetch(requestURL, {
+    ...init,
+    headers,
+    credentials: init.credentials ?? 'include',
+  });
+
+  let response = await doFetch();
+  if (shouldRetryViaOnykiaLoligo(endpoint, response, coreApi)) {
+    response = await doFetch(buildURL(endpoint, params, CORE_API_PREFIX_FALLBACK));
+  }
+  if (response.status === 401 && shouldAttemptAuthRefresh(endpoint)) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) {
+      response = await doFetch();
+      if (shouldRetryViaOnykiaLoligo(endpoint, response, coreApi)) {
+        response = await doFetch(buildURL(endpoint, params, CORE_API_PREFIX_FALLBACK));
+      }
+    } else {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('schema:auth-expired'));
+      }
+      throw new ApiError(401, 'Unauthorized', { error: 'Token expired and refresh failed' });
+    }
+  }
+
+  if (!response.ok) {
+    throw new ApiError(response.status, response.statusText, await errorData(response));
+  }
+
+  const blob = await response.blob();
+  return {
+    blob,
+    filename: sanitizeFilename(
+      filenameFromContentDisposition(response.headers.get('Content-Disposition')),
+      fallbackFilename
+    ),
+    contentType: response.headers.get('Content-Type') || blob.type || 'application/octet-stream',
+  };
+}
+
+// COS presigned URL upload flow
+export interface PresignedUploadResult {
+  job_id: string;
+  file_id: string;
+  upload_url: string;
+  storage_type: string;
+}
+
+/** Raised when the user intentionally stops an in-flight upload. */
+export class UploadCancelledError extends Error {
+  constructor(message = '上传已取消') {
+    super(message);
+    this.name = 'UploadCancelledError';
+  }
+}
+
+export function isUploadCancelled(error: unknown): error is UploadCancelledError {
+  return error instanceof UploadCancelledError
+    || (typeof error === 'object' && error !== null && 'name' in error && (error as { name?: unknown }).name === 'AbortError');
+}
+
+export const MULTIPART_THRESHOLD_BYTES = 64 * 1024 * 1024;
+export const MULTIPART_PART_SIZE_BYTES = 32 * 1024 * 1024;
+
+export interface MultipartInitResult {
+  session_id: string;
+  file_id: string;
+  part_size: number;
+  total_parts: number;
+  completed_parts: number[];
+}
+
+export interface MultipartPresignResult {
+  session_id: string;
+  parts: Array<{ part_number: number; url: string }>;
+}
+
+interface UploadJobFile {
+  id: string;
+  file_name?: string;
+  read_type?: 'read1' | 'read2' | 'single' | 'bed';
+  presigned_url?: string;
+}
+
+interface UploadJobResponse {
+  id: string;
+  files?: UploadJobFile[];
+}
+
+function backendUploadURL(fileID: string): string {
+  const configuredPrefix = getRuntimeCoreApiPrefix();
+  const prefix = configuredPrefix || (getRuntimeBackendFlavor() === 'onykia' ? CORE_API_PREFIX_FALLBACK : '');
+  return `${getRuntimeApiBaseUrl()}${withCorePrefix(`/v1/upload/local/${encodeURIComponent(fileID)}`, prefix)}`;
+}
+
+function isBackendLocalUploadURL(uploadURL: string): boolean {
+  try {
+    const url = new URL(uploadURL, typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
+    return /\/v1\/(?:loligo\/)?upload\/local\//.test(url.pathname) && isAllowedBackendOrigin(url);
+  } catch {
+    return false;
+  }
+}
+
+function isAbsoluteHTTPURL(value: string): boolean {
+  return /^https?:\/\//i.test(value.trim());
+}
+
+function allowedBackendOrigins(): Set<string> {
+  const fallbackOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+  const origins = new Set<string>([fallbackOrigin]);
+  try {
+    origins.add(new URL(getRuntimeApiBaseUrl(), fallbackOrigin).origin);
+  } catch {
+    // Ignore malformed runtime values here; runtime-config normalization already falls back safely.
+  }
+  return origins;
+}
+
+function isAllowedBackendOrigin(url: URL): boolean {
+  return allowedBackendOrigins().has(url.origin);
+}
+
+function isAllowedPresignedUploadOrigin(url: URL): boolean {
+  return getRuntimeUploadOrigins().includes(url.origin);
+}
+
+function onykiaFallbackLocalUploadURL(uploadURL: string): string | null {
+  if (getRuntimeBackendFlavor() === 'loligo' || getRuntimeCoreApiPrefix()) return null;
+  try {
+    const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+    const url = new URL(uploadURL, base);
+    if (!/\/v1\/upload\/local\//.test(url.pathname)) return null;
+    url.pathname = url.pathname.replace('/v1/upload/local/', '/v1/loligo/upload/local/');
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+export async function requestPresignedUploadUrl(
+  filename: string,
+  fileSize: number,
+  readType: 'read1' | 'read2' | 'single' | 'bed' | 'vcf' = 'single',
+  referenceGenome?: 'GRCh37' | 'GRCh38',
+  uploadPolicyAcknowledged = false,
+  internalId?: string,
+  options?: ApiSignalOptions,
+): Promise<PresignedUploadResult> {
+  const fileType = readType === 'vcf' ? 'vcf' : readType === 'bed'
+    ? 'bed'
+    : readType === 'single'
+      ? 'fastq_single'
+      : 'fastq_paired';
+  const job = await api.post<UploadJobResponse>('/v1/upload/jobs', {
+    name: filename,
+	...(internalId?.trim() ? { internal_id: internalId.trim() } : {}),
+    file_type: fileType,
+    ...(readType === 'bed' && referenceGenome ? { reference_genome: referenceGenome } : {}),
+    provider: 'local',
+    upload_policy_acknowledged: uploadPolicyAcknowledged,
+    files: [{
+      file_name: filename,
+      read_type: readType,
+      file_size: fileSize,
+    }],
+  }, options);
+  const file = job.files?.[0];
+  if (!file?.id) {
+    throw new LocalizedError("interface.uploadJobDidNotReturnAFileId8e50c7", undefined, "Upload job did not return a file id");
+  }
+  return {
+    job_id: job.id,
+    file_id: file.id,
+    upload_url: file.presigned_url || backendUploadURL(file.id),
+    storage_type: file.presigned_url ? 'presigned' : 'local',
+  };
+}
+
+export interface PairedUploadJobResult {
+  job_id: string;
+  files: Array<PresignedUploadResult & { read_type: 'read1' | 'read2' }>;
+}
+
+export async function requestPairedUploadJob(r1: File, r2: File, uploadPolicyAcknowledged: boolean, sampleId?: string, internalId?: string, options?: ApiSignalOptions): Promise<PairedUploadJobResult> {
+  const job = await api.post<UploadJobResponse>('/v1/upload/jobs', {
+    ...(sampleId ? { sample_id: sampleId } : {}),
+	...(internalId?.trim() ? { internal_id: internalId.trim() } : {}),
+    name: `${r1.name} + ${r2.name}`,
+    file_type: 'fastq_paired',
+    provider: 'local',
+    upload_policy_acknowledged: uploadPolicyAcknowledged,
+    files: [
+      {
+        file_name: r1.name,
+        read_type: 'read1',
+        file_size: r1.size,
+      },
+      {
+        file_name: r2.name,
+        read_type: 'read2',
+        file_size: r2.size,
+      },
+    ],
+  }, options);
+
+  const files = job.files ?? [];
+  const byReadType = new Map(files.map((file, index) => [file.read_type || (index === 0 ? 'read1' : 'read2'), file]));
+  const r1File = byReadType.get('read1');
+  const r2File = byReadType.get('read2');
+  if (!job.id || !r1File?.id || !r2File?.id) {
+    throw new LocalizedError("interface.uploadJobDidNotReturnBothRAndRFileIdsd45f58", undefined, "Upload job did not return both R1 and R2 file ids");
+  }
+
+  const normalizeFile = (file: UploadJobFile, readType: 'read1' | 'read2') => ({
+    job_id: job.id,
+    file_id: file.id,
+    upload_url: file.presigned_url || backendUploadURL(file.id),
+    storage_type: file.presigned_url ? 'presigned' : 'local',
+    read_type: readType,
+  });
+
+  return {
+    job_id: job.id,
+    files: [normalizeFile(r1File, 'read1'), normalizeFile(r2File, 'read2')],
+  };
+}
+
+class UploadError extends Error {
+  constructor(public status: number, message = `Upload failed: ${status}`) {
+    super(message);
+    this.name = 'UploadError';
+  }
+}
+
+function normalizeUploadURL(uploadURL: string): string {
+  if (/[\u0000-\u001f]/.test(uploadURL)) {
+    throw new LocalizedError("interface.invalidUploadUrl24ca2f", undefined, "Invalid upload URL");
+  }
+
+  const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+  const url = new URL(uploadURL, base);
+  const isLocalUpload = isBackendLocalUploadURL(uploadURL);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`Unsupported upload URL scheme: ${url.protocol}`);
+  }
+  if (url.username || url.password) {
+    throw new LocalizedError("interface.uploadUrlMustNotIncludeCredentials9ad80b", undefined, "Upload URL must not include credentials");
+  }
+  if (!isLocalUpload && !isAbsoluteHTTPURL(uploadURL)) {
+    throw new LocalizedError("interface.presignedUploadUrlMustBeAbsolute12d940", undefined, "Presigned upload URL must be absolute");
+  }
+  if (!isLocalUpload && isAllowedBackendOrigin(url)) {
+    throw new LocalizedError("interface.refusingToUploadToANonUploadBackendEndpoint3972d8", undefined, "Refusing to upload to a non-upload backend endpoint");
+  }
+  if (!isLocalUpload && !isAllowedPresignedUploadOrigin(url)) {
+    throw new LocalizedError("interface.presignedUploadUrlHostIsNotAllowed78a5f7", undefined, "Presigned upload URL host is not allowed");
+  }
+  url.hash = '';
+  return url.toString();
+}
+
+function uploadFileOnce(uploadURL: string, file: Blob, onProgress?: (pct: number) => void, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new UploadCancelledError());
+      return;
+    }
+    let safeUploadURL: string;
+    try {
+      safeUploadURL = normalizeUploadURL(uploadURL);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    const isLocalUpload = isBackendLocalUploadURL(safeUploadURL);
+    const xhr = new XMLHttpRequest();
+    let settled = false;
+    const cleanup = () => {
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback();
+    };
+    const onAbort = () => {
+      xhr.abort();
+      finish(() => reject(new UploadCancelledError()));
+    };
+    xhr.open(isLocalUpload ? 'POST' : 'PUT', safeUploadURL);
+    if (!isLocalUpload) {
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    } else {
+      xhr.withCredentials = true;
+      const csrfToken = getCookie('csrf_token');
+      if (csrfToken) {
+        xhr.setRequestHeader('X-CSRF-Token', csrfToken);
+      }
+    }
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) finish(resolve);
+      else finish(() => reject(new UploadError(xhr.status)));
+    };
+    xhr.onerror = () => finish(() => reject(new LocalizedError("interface.uploadNetworkError209cef", undefined, "Upload network error")));
+    xhr.onabort = () => finish(() => reject(new UploadCancelledError()));
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (isLocalUpload) {
+      const form = new FormData();
+      form.append('file', file);
+      xhr.send(form);
+    } else {
+      xhr.send(file);
+    }
+  });
+}
+
+export async function uploadToCOS(presignedUrl: string, file: File, onProgress?: (pct: number) => void, signal?: AbortSignal) {
+  try {
+    await uploadFileOnce(presignedUrl, file, onProgress, signal);
+  } catch (err) {
+    if (isUploadCancelled(err) || signal?.aborted) throw new UploadCancelledError();
+    const fallbackURL = isBackendLocalUploadURL(presignedUrl) ? onykiaFallbackLocalUploadURL(presignedUrl) : null;
+    if (fallbackURL && err instanceof UploadError && err.status === 404) {
+      await uploadFileOnce(fallbackURL, file, onProgress, signal);
+      return;
+    }
+    throw err;
+  }
+}
+
+// Exposed for local-storage retries; the URL is still the authenticated
+// backend endpoint and never contains a storage key.
+export function localUploadURL(fileID: string): string {
+  return backendUploadURL(fileID);
+}
+
+export async function uploadPartToCOS(uploadURL: string, part: Blob, onProgress?: (pct: number) => void, signal?: AbortSignal): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new UploadCancelledError());
+      return;
+    }
+    let safeUploadURL: string;
+    try {
+      safeUploadURL = normalizeUploadURL(uploadURL);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    const xhr = new XMLHttpRequest();
+    let settled = false;
+    const cleanup = () => signal?.removeEventListener('abort', onAbort);
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback();
+    };
+    const onAbort = () => {
+      xhr.abort();
+      finish(() => reject(new UploadCancelledError()));
+    };
+    xhr.open('PUT', safeUploadURL);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) onProgress(Math.round((event.loaded / event.total) * 100));
+    };
+    xhr.onload = () => {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        finish(() => reject(new UploadError(xhr.status)));
+        return;
+      }
+      const etag = xhr.getResponseHeader('ETag') || xhr.getResponseHeader('etag');
+      if (!etag) {
+        finish(() => reject(new LocalizedError("display.objectStorageDidNotReturnTheParte796b5")));
+        return;
+      }
+      finish(() => resolve(etag));
+    };
+    xhr.onerror = () => finish(() => reject(new LocalizedError("interface.uploadNetworkError209cef", undefined, "Upload network error")));
+    xhr.onabort = () => finish(() => reject(new UploadCancelledError()));
+    signal?.addEventListener('abort', onAbort, { once: true });
+    xhr.send(part);
+  });
+}
+
+export function startUpload(fileID: string, options?: ApiSignalOptions) {
+  return api.post(`/v1/upload/files/${encodeURIComponent(fileID)}/start`, {}, options);
+}
+
+export function initMultipartUpload(fileID: string, options?: ApiSignalOptions) {
+  return api.post<MultipartInitResult>(`/v1/upload/files/${encodeURIComponent(fileID)}/multipart`, {}, options);
+}
+
+export function presignMultipartParts(fileID: string, sessionID: string, partNumbers: number[], options?: ApiSignalOptions) {
+  return api.post<MultipartPresignResult>(
+    `/v1/upload/files/${encodeURIComponent(fileID)}/multipart/${encodeURIComponent(sessionID)}/parts/presign`,
+    { part_numbers: partNumbers },
+    options,
+  );
+}
+
+export function recordMultipartPart(fileID: string, sessionID: string, partNumber: number, etag: string, size: number, options?: ApiSignalOptions) {
+  return api.put<void>(
+    `/v1/upload/files/${encodeURIComponent(fileID)}/multipart/${encodeURIComponent(sessionID)}/parts`,
+    { part_number: partNumber, etag, size },
+    options,
+  );
+}
+
+export function completeMultipartUpload(fileID: string, sessionID: string, options?: ApiSignalOptions) {
+  return api.post(`/v1/upload/files/${encodeURIComponent(fileID)}/multipart/${encodeURIComponent(sessionID)}/complete`, {}, options);
+}
+
+export function abortMultipartUpload(fileID: string, sessionID: string) {
+  return api.delete(`/v1/upload/files/${encodeURIComponent(fileID)}/multipart/${encodeURIComponent(sessionID)}`);
+}
+
+export function retryS3Upload(fileID: string, options?: ApiSignalOptions) {
+  return api.post<{ id: string; presigned_url?: string }>(`/v1/upload/files/${encodeURIComponent(fileID)}/retry`, {}, options);
+}
+
+export function deleteUploadJob(jobID: string): Promise<void> {
+  return api.delete<void>(`/v1/upload/jobs/${encodeURIComponent(jobID)}`);
+}
+
+export function getDataAssetUploadStatus(fileID: string, options?: ApiSignalOptions) {
+  return api.get<{ status?: string; provider?: string }>(`/v1/data/assets/${encodeURIComponent(fileID)}`, options);
+}
+
+export async function confirmUpload(fileId: string, options?: ApiSignalOptions) {
+  return api.post(`/v1/upload/files/${encodeURIComponent(fileId)}/complete`, {}, options);
 }
 
 export const api = {
@@ -167,14 +834,41 @@ export const api = {
     request<T>(endpoint, {
       ...options,
       method: 'POST',
-      body: data ? JSON.stringify(data) : undefined,
+      body: data !== undefined ? JSON.stringify(data) : undefined,
+  }),
+
+  postForm: <T>(endpoint: string, data: FormData, options?: RequestOptions) =>
+    request<T>(endpoint, {
+      ...options,
+      method: 'POST',
+      body: data,
     }),
 
   put: <T>(endpoint: string, data?: unknown, options?: RequestOptions) =>
     request<T>(endpoint, {
       ...options,
       method: 'PUT',
-      body: data ? JSON.stringify(data) : undefined,
+      body: data !== undefined ? JSON.stringify(data) : undefined,
+    }),
+
+  download: (endpoint: string, data?: unknown, options?: RequestOptions & { fallbackFilename?: string }) => {
+    const { fallbackFilename, ...requestOptions } = options ?? {};
+    return requestDownload(
+      endpoint,
+      {
+        ...requestOptions,
+        method: requestOptions.method ?? 'POST',
+        body: data !== undefined ? JSON.stringify(data) : requestOptions.body,
+      },
+      fallbackFilename
+    );
+  },
+
+  patch: <T>(endpoint: string, data?: unknown, options?: RequestOptions) =>
+    request<T>(endpoint, {
+      ...options,
+      method: 'PATCH',
+      body: data !== undefined ? JSON.stringify(data) : undefined,
     }),
 
   delete: <T>(endpoint: string, options?: RequestOptions) =>

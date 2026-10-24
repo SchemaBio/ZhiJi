@@ -4,7 +4,9 @@ import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { X } from 'lucide-react';
-import { mainNavItems, sidebarNavConfig, isNavItemActive, getSectionFromPath } from '@/config/navigation';
+import { getRuntimeBackendFlavor } from '@/lib/runtime-config';
+import { useAuth } from '@/components/providers/AuthProvider';
+import { mainNavItems, sidebarNavConfig, isNavItemActive, isNavItemVisible, getSectionFromPath } from '@/config/navigation';
 
 interface MobileNavProps {
   currentSection: string;
@@ -16,8 +18,11 @@ interface MobileNavProps {
  */
 export function MobileNav({ currentSection, onClose }: MobileNavProps) {
   const pathname = usePathname();
+  const { isPlatformAdmin } = useAuth();
+  const isSaaS = getRuntimeBackendFlavor() === 'onykia';
   const section = getSectionFromPath(pathname);
-  const sidebarItems = sidebarNavConfig[section] || [];
+  const visibleMainItems = mainNavItems.filter((item) => isNavItemVisible(item, isSaaS, isPlatformAdmin()));
+  const sidebarItems = (sidebarNavConfig[section] || []).filter((item) => isNavItemVisible(item, isSaaS, isPlatformAdmin()));
 
   return (
     <div className="fixed inset-0 z-50 bg-canvas">
@@ -39,7 +44,7 @@ export function MobileNav({ currentSection, onClose }: MobileNavProps) {
         <nav className="p-4 border-b border-border">
           <p className="text-xs text-fg-muted mb-2 uppercase tracking-wider">主导航</p>
           <ul className="space-y-1">
-            {mainNavItems.map((item) => {
+            {visibleMainItems.map((item) => {
               const isActive = isNavItemActive(item.href, pathname);
               const Icon = item.icon;
 

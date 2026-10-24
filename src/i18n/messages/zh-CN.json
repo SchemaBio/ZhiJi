@@ -1,0 +1,43 @@
+{
+  "common": {
+    "appName": "知几",
+    "appDescription": "肿瘤基因组分析平台",
+    "loading": "正在加载",
+    "selectAtLeastOneFile7487f9": "请至少选择一个文件"
+  },
+  "permissions": {
+    "denied": "没有权限执行此操作"
+  },
+  "uploadCapacity": {
+    "unavailable": "无法确认上传容量"
+  },
+  "display": {
+    "uploadUrlForPartPNotReceived02072e": "没有收到分片 {p0} 的上传地址",
+    "retryUploadUrlForPartPNot8e24d7": "没有收到分片 {p0} 的重试地址",
+    "partPUploadFailed2056d8": "分片 {p0} 上传失败",
+    "uploadDidNotReturnCompleteReadReadca5a53": "上传没有返回完整的 Read1 和 Read2",
+    "noResumableUploadRecordFoundForPd2805f": "没有找到 {p0} 的可续传记录",
+    "pUsesLocalStorageUploadsCannotResume3ed5fd": "{p0} 使用本地存储，不能续传",
+    "retryUploadUrlForPNotReceivededa3da": "没有收到 {p0} 的重试地址",
+    "bedFileMustNotExceedMb54531a": "BED 文件不能超过 20 MB",
+    "selectABedOrBedGzFile803570": "请选择 .bed 或 .bed.gz 文件",
+    "retryUploadUrlNotReceivede6155e": "没有收到重试上传地址",
+    "bedListTooLarge1d72f2": "BED 列表过大",
+    "resourceListTooLargeNarrowYourSearch889114": "资源列表过大，请缩小搜索范围",
+    "objectStorageDidNotReturnTheParte796b5": "对象存储没有返回分片标识"
+  },
+  "interface": {
+    "uploadJobDidNotReturnAFileId8e50c7": "上传任务没有返回文件编号",
+    "uploadJobDidNotReturnBothRAndRFileIdsd45f58": "上传任务没有同时返回 Read1 和 Read2 的文件编号",
+    "invalidUploadUrl24ca2f": "上传地址无效",
+    "uploadUrlMustNotIncludeCredentials9ad80b": "上传地址不能包含账号或密码",
+    "presignedUploadUrlMustBeAbsolute12d940": "预签名上传地址必须是绝对地址",
+    "refusingToUploadToANonUploadBackendEndpoint3972d8": "拒绝把文件上传到非上传接口",
+    "presignedUploadUrlHostIsNotAllowed78a5f7": "预签名上传地址的主机不在允许列表中",
+    "uploadNetworkError209cef": "上传网络错误",
+    "notAuthenticated0c91ac": "未登录"
+  },
+  "tasks": {
+    "serviceUnavailable": "任务服务暂时不可用，请稍后再试"
+  }
+}

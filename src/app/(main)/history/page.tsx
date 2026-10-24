@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { PageContent } from '@/components/layout';
+import { getRuntimeBackendFlavor } from '@/lib/runtime-config';
 import type { HistoryTabType } from './types';
 import { DEFAULT_HISTORY_FILTER_STATE } from './types';
 import {
@@ -15,6 +16,18 @@ import {
 } from './components';
 
 export default function HistoryPage() {
+  if (getRuntimeBackendFlavor() === 'onykia') {
+    return (
+      <PageContent>
+        <h2 className="text-lg font-medium text-fg-default mb-2">历史检出</h2>
+        <p className="text-sm text-fg-muted">历史检出只在 Loligo 自部署实例中提供。</p>
+      </PageContent>
+    );
+  }
+  return <HistoryContent />;
+}
+
+function HistoryContent() {
   const [activeTab, setActiveTab] = React.useState<HistoryTabType>('snv-indel');
   const [filterState, setFilterState] = React.useState(DEFAULT_HISTORY_FILTER_STATE);
 

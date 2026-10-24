@@ -1,93 +1,95 @@
 # 知几 ZhiJi
 
-肿瘤体细胞突变分析平台，面向肿瘤精准医疗场景。
+肿瘤体细胞突变分析平台。开源前端默认对接开源分析 API **Loligo**。闭源网关 **Onykia** 会把核心分析接口转发到 Loligo，对应关系与遗传分析产品里的 YiJian / Octopus / Squid 相同。公开资源路径参照 Octopus，运行时只使用 Loligo 和 Onykia 这两个名字。
 
 ## 功能特性
 
-- 样本管理（组织配对、液体活检）
-- 体细胞变异分析（SNV/InDel/CNV/Fusion/Hotspot）
-- 肿瘤标志物检测（MSI/TMB/HRD）
-- 靶向药物推荐
-- 化疗药物评估
-- 免疫治疗评估（Neoantigen）
-- AMP Tier 分级评估
-- IGV 基因组浏览器集成
+- 样本管理（组织、液体活检字段保留在表单中；公共字段走 Loligo）
+- 数据中心与任务中心
+- 体细胞变异结果浏览（SNV/InDel/CNV/Fusion/Hotspot）
+- 肿瘤标志物、化疗、新抗原和报告页保留现有界面
+- 流程中心：流程、基因列表、BED、基线、报告服务
+- 平台管理与九项业务权限（Loligo）
+- 费用中心入口（仅 Onykia，尚未接入账单）
 
 ## 技术栈
 
-- Next.js 14
-- React 18
+- Next.js 16
+- React 19
 - Tailwind CSS
-- Radix UI
-- IGV.js
+- Vitest
 
 ## 环境要求
 
-- Node.js >= 18.0.0
-- pnpm >= 8.0.0
+- Node.js 22
+- pnpm 9.15.9
 
 ## 本地开发
 
 ```bash
+cp .env.example .env.local
 pnpm install
 pnpm dev
 ```
 
-开发服务器运行在 http://localhost:3002
+开发服务器运行在 http://localhost:3002。默认 API 为 `http://localhost:8080/api`，后端类型为 `loligo`。
+
+## 配置
+
+```env
+# 本地开发
+NEXT_PUBLIC_API_URL=http://localhost:8080/api
+NEXT_PUBLIC_BACKEND=loligo
+
+# Docker
+ZHIJI_API_URL=/api
+ZHIJI_BACKEND=loligo
+```
+
+`ZHIJI_BACKEND` 只能是 `loligo` 或 `onykia`。Onykia 模式下核心接口前缀是 `/v1/loligo`。任务详情的服务端检查默认访问 `http://loligo:8080/api`，自定义地址使用 `ZHIJI_SERVER_API_URL`。
 
 ## 构建
 
 ```bash
-pnpm build      # 生产构建
-pnpm start      # 启动生产服务
-pnpm typecheck  # 类型检查
-pnpm lint       # 代码检查
+pnpm test
+pnpm typecheck
+pnpm build
+pnpm start
 ```
 
 ## Docker 部署
 
 ```bash
 docker build -t zhiji .
-docker run -p 3000:3000 -e NEXT_PUBLIC_API_URL=http://backend:8080 zhiji
+docker run -p 3000:3000 \
+  -e ZHIJI_API_URL=/api \
+  -e ZHIJI_BACKEND=loligo \
+  zhiji
 ```
 
-## 环境变量
-
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `NEXT_PUBLIC_API_URL` | 后端 API 地址 | `http://localhost:8080` |
-| `PORT` | 服务端口 | `3000` |
+入口脚本会根据环境变量生成 `public/runtime-config.js`。镜像监听 3000 端口，以非 root 用户运行。
 
 ## 项目结构
 
 ```
 src/
-├── app/                    # Next.js App Router
-│   ├── (main)/             # 主布局页面
-│   │   ├── dashboard/      # 工作台
-│   │   ├── analysis/       # 分析中心
+├── app/
+│   ├── (main)/
+│   │   ├── dashboard/      # 概览
 │   │   ├── samples/        # 样本管理
-│   │   ├── history/        # 历史检出
+│   │   ├── data/           # 数据中心
+│   │   ├── tasks/          # 任务中心与肿瘤结果
+│   │   ├── history/        # 历史检出（仅 Loligo）
 │   │   ├── pipeline/       # 流程中心
-│   │   ├── settings/       # 系统设置
-│   │   └── admin/          # 管理中心
-│   ├── login/              # 登录
-│   └── register/           # 注册
-├── components/             # 组件
-│   ├── assistant/          # AI 助手
-│   ├── layout/             # 布局组件
-│   └── providers/          # Context Provider
-├── hooks/                  # 自定义 Hooks
-├── config/                 # 配置
-├── lib/                    # 工具库
-├── types/                  # 类型定义
-└── app/globals.css         # 全局样式
+│   │   ├── admin/          # 平台管理（仅 Loligo）
+│   │   ├── billing/        # 费用中心空态（仅 Onykia）
+│   │   └── settings/       # 个人设置
+│   ├── login/
+│   └── register/
+├── components/
+├── i18n/
+└── lib/
 ```
-
-## 依赖
-
-- [@schema/ui-kit](https://github.com/SchemaBio/ui-kit) — 共享 UI 组件库
-- 后端 API：[Octopus](https://github.com/schemabio/Octopus)
 
 ## License
 

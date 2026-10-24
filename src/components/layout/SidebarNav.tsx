@@ -9,7 +9,8 @@ import { ChevronLeft } from 'lucide-react';
 import { UserMenu } from './UserMenu';
 import { OrganizationSwitcher } from './OrganizationSwitcher';
 import { useAuth } from '@/components/providers/AuthProvider';
-import { mainNavItems, sidebarNavConfig, isNavItemActive, type SidebarNavItem, type NavItem } from '@/config/navigation';
+import { getRuntimeBackendFlavor } from '@/lib/runtime-config';
+import { mainNavItems, sidebarNavConfig, isNavItemActive, isNavItemVisible, type SidebarNavItem, type NavItem } from '@/config/navigation';
 
 interface SidebarNavProps {
   collapsed: boolean;
@@ -22,10 +23,9 @@ interface SidebarNavProps {
  */
 export function SidebarNav({ collapsed, onCollapsedChange }: SidebarNavProps) {
   const pathname = usePathname();
-  const { hasAnyOrgRole, isSuperAdmin } = useAuth();
-
-  // Check if user is org admin or higher
-  const isOrgAdmin = isSuperAdmin() || hasAnyOrgRole('OWNER', 'ADMIN');
+  const { isPlatformAdmin } = useAuth();
+  const isSaaS = getRuntimeBackendFlavor() === 'onykia';
+  const isAdmin = isPlatformAdmin();
 
   // Determine current section from pathname
   const currentSection = React.useMemo(() => {
@@ -34,18 +34,15 @@ export function SidebarNav({ collapsed, onCollapsedChange }: SidebarNavProps) {
   }, [pathname]);
 
   // 获取子导航项，并根据权限过滤
+  const visibleMainItems = React.useMemo(
+    () => mainNavItems.filter((item) => isNavItemVisible(item, isSaaS, isAdmin)),
+    [isAdmin, isSaaS],
+  );
+
   const subItems = React.useMemo(() => {
     const items = sidebarNavConfig[currentSection as keyof typeof sidebarNavConfig] || [];
-
-    // 对于设置页面，非管理员隐藏权限管理和AI设置
-    if (currentSection === 'settings' && !isOrgAdmin) {
-      return items.filter(item =>
-        item.href !== '/settings/permissions' && item.href !== '/settings/ai'
-      );
-    }
-
-    return items;
-  }, [currentSection, isOrgAdmin]);
+    return items.filter((item) => isNavItemVisible(item, isSaaS, isAdmin));
+  }, [currentSection, isAdmin, isSaaS]);
 
   return (
     <aside
@@ -114,7 +111,7 @@ export function SidebarNav({ collapsed, onCollapsedChange }: SidebarNavProps) {
       {/* Main Navigation */}
       <nav className="py-2 border-b border-border">
         <ul className="space-y-1 px-2">
-          {mainNavItems.map((item) => (
+          {visibleMainItems.map((item) => (
             <MainNavItemComponent
               key={item.href}
               item={item}

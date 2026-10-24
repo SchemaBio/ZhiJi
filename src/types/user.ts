@@ -1,36 +1,35 @@
-// System-level roles
-type SystemRole = 'SUPER_ADMIN' | 'USER';
+export type SystemRole = 'PLATFORM_ADMIN' | 'ORG_USER' | 'SUPER_ADMIN' | 'USER';
 
-// Organization-level roles
 export type OrgRole = 'OWNER' | 'ADMIN' | 'DOCTOR' | 'ANALYST' | 'VIEWER';
 
-// Organization info
+export type ApprovalStatus = 'approved' | 'pending' | 'rejected';
+
 export interface Organization {
   id: string;
   name: string;
   slug: string;
   description?: string;
+  maxConcurrentTasks?: number;
+  balanceAlertThreshold?: number;
+  storageQuotaBytes?: number;
+  isActive?: boolean;
 }
 
-// 用户信息
 export interface User {
   id: string;
   email: string;
   name: string;
   systemRole: SystemRole;
+  permissions?: string[];
   primaryOrgId?: string;
+  orgId?: string;
   isActive: boolean;
+  approvalStatus?: ApprovalStatus;
   createdAt: string;
   updatedAt: string;
 }
 
-// Organization info for user
-export interface UserOrganizationInfo {
-  id: string;
-  name: string;
-  slug: string;
-  description?: string;
+export interface UserOrganizationInfo extends Organization {
   orgRole: OrgRole;
-  joinedAt: string;
+  joinedAt?: string;
 }
-

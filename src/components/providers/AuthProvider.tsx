@@ -1,27 +1,51 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { BusinessPermissionContext } from './BusinessPermissionProvider';
+import { userHasPermission, type BusinessPermission } from '@/lib/permissions';
+import { getRuntimeBackendFlavor } from '@/lib/runtime-config';
+import { LocalizedError } from '@/i18n/errors';
 import type { User, UserOrganizationInfo, OrgRole } from '@/types/user';
-import type { LoginRequest, LoginResponse } from '@/types/auth';
+import type { LoginResponse } from '@/types/auth';
 import { authApi } from '@/lib/auth';
 import { STORAGE_KEYS } from '@/lib/storage';
 import { hashPassword } from '@/lib/crypto';
 
+const DEV_MOCK_AUTH = process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_DEV_MOCK_AUTH === 'true';
+
 interface AuthContextType {
+  hasPermission: (permission: BusinessPermission) => boolean;
+  refreshSession: () => Promise<void>;
   user: User | null;
   organizations: UserOrganizationInfo[];
   currentOrg: UserOrganizationInfo | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  logout: () => void;
+  login: (email: string, password: string, remember?: boolean) => Promise<void>;
+  logout: () => Promise<void>;
+  updateProfile: (data: { name: string }) => Promise<User>;
+  changePassword: (oldPassword: string, newPassword: string) => Promise<void>;
   switchOrganization: (orgId: string) => Promise<void>;
   hasOrgRole: (role: OrgRole) => boolean;
   hasAnyOrgRole: (...roles: OrgRole[]) => boolean;
+  isPlatformAdmin: () => boolean;
   isSuperAdmin: () => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+const PUBLIC_AUTH_PATHS = ['/login', '/register', '/forgot-password', '/reset-password', '/privacy', '/verify-email', '/about'] as const;
+
+function isPublicAuthPath(pathname: string): boolean {
+  return PUBLIC_AUTH_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+}
+
+function clearStoredAuth() {
+  localStorage.removeItem(STORAGE_KEYS.USER);
+  localStorage.removeItem(STORAGE_KEYS.LEGACY_AUTH_TOKENS);
+  localStorage.removeItem(STORAGE_KEYS.ORGANIZATIONS);
+  localStorage.removeItem(STORAGE_KEYS.CURRENT_ORG);
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -29,124 +53,129 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [currentOrg, setCurrentOrg] = useState<UserOrganizationInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load stored auth state on mount
-  useEffect(() => {
-    const loadStoredAuth = () => {
-      try {
-        const storedUser = localStorage.getItem(STORAGE_KEYS.USER);
-        const storedOrgs = localStorage.getItem(STORAGE_KEYS.ORGANIZATIONS);
-        const storedCurrentOrg = localStorage.getItem(STORAGE_KEYS.CURRENT_ORG);
-
-        if (storedUser) {
-          setUser(JSON.parse(storedUser));
-        }
-
-        if (storedOrgs) {
-          const orgs = JSON.parse(storedOrgs);
-          setOrganizations(orgs);
-
-          if (storedCurrentOrg) {
-            setCurrentOrg(JSON.parse(storedCurrentOrg));
-          } else if (orgs.length > 0) {
-            setCurrentOrg(orgs[0]);
-          }
-        }
-      } catch (error) {
-        console.error('Failed to load stored auth state:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    loadStoredAuth();
+  const applySession = useCallback((nextUser: User, nextOrg: UserOrganizationInfo | null) => {
+    setUser(nextUser);
+    setOrganizations(nextOrg ? [nextOrg] : []);
+    setCurrentOrg(nextOrg);
+    if (!DEV_MOCK_AUTH) clearStoredAuth();
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
-    setIsLoading(true);
-    try {
-      const hashedPassword = await hashPassword(password, email);
-      const response: LoginResponse = await authApi.login({ email, password: hashedPassword });
-
-      localStorage.removeItem(STORAGE_KEYS.TOKENS);
-
-      // Store user
-      localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(response.user));
-      setUser(response.user);
-
-      // Store organizations
-      localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(response.organizations));
-      setOrganizations(response.organizations);
-
-      // Set current org
-      if (response.currentOrg) {
-        localStorage.setItem(STORAGE_KEYS.CURRENT_ORG, JSON.stringify(response.currentOrg));
-        setCurrentOrg(response.currentOrg);
-      } else if (response.organizations.length > 0) {
-        localStorage.setItem(STORAGE_KEYS.CURRENT_ORG, JSON.stringify(response.organizations[0]));
-        setCurrentOrg(response.organizations[0]);
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  const logout = useCallback(() => {
-    localStorage.removeItem(STORAGE_KEYS.USER);
-    localStorage.removeItem(STORAGE_KEYS.TOKENS);
-    localStorage.removeItem(STORAGE_KEYS.ORGANIZATIONS);
-    localStorage.removeItem(STORAGE_KEYS.CURRENT_ORG);
+  const resetSession = useCallback(() => {
+    clearStoredAuth();
     setUser(null);
     setOrganizations([]);
     setCurrentOrg(null);
   }, []);
 
-  const switchOrganization = useCallback(async (orgId: string) => {
-    const org = organizations.find(o => o.id === orgId);
-    if (org) {
-      localStorage.setItem(STORAGE_KEYS.CURRENT_ORG, JSON.stringify(org));
-      setCurrentOrg(org);
-
-      // Optionally call API to switch on backend
+  useEffect(() => {
+    let cancelled = false;
+    const loadSession = async () => {
       try {
-        await authApi.switchOrganization(orgId);
-      } catch (error) {
-        console.error('Failed to switch organization on backend:', error);
+        const currentUser = await authApi.getCurrentUser();
+        if (cancelled) return;
+        const organization = await authApi.getCurrentOrganization().catch(() => null);
+        if (cancelled) return;
+        applySession(currentUser, organization ? { ...organization, orgRole: currentUser.systemRole === 'PLATFORM_ADMIN' ? 'OWNER' : 'VIEWER' } : null);
+      } catch {
+        if (!cancelled) resetSession();
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
+    };
+    loadSession();
+    return () => { cancelled = true; };
+  }, [applySession, resetSession]);
+
+  const login = useCallback(async (email: string, password: string, remember = false) => {
+    setIsLoading(true);
+    try {
+      const hashedPassword = await hashPassword(password, email);
+      const response: LoginResponse = await authApi.login({ email, password: hashedPassword, remember });
+      applySession(response.user, response.currentOrg ?? response.organizations[0] ?? null);
+    } finally {
+      setIsLoading(false);
     }
+  }, [applySession]);
+
+  const logout = useCallback(async () => {
+    try {
+      await authApi.logout();
+    } catch (error) {
+      console.warn('Logout request failed; clearing local session anyway.', error);
+    } finally {
+      resetSession();
+    }
+  }, [resetSession]);
+
+  const updateProfile = useCallback(async (data: { name: string }): Promise<User> => {
+    if (!user) throw new LocalizedError('interface.notAuthenticated0c91ac');
+    const nextUser = await authApi.updateProfile(data);
+    setUser(nextUser);
+    return nextUser;
+  }, [user]);
+
+  const changePassword = useCallback(async (oldPassword: string, newPassword: string) => {
+    if (!user) throw new LocalizedError('interface.notAuthenticated0c91ac');
+    const [preparedOld, preparedNew] = await Promise.all([
+      hashPassword(oldPassword, user.email),
+      hashPassword(newPassword, user.email),
+    ]);
+    await authApi.changePassword({ old_password: preparedOld, new_password: preparedNew });
+  }, [user]);
+
+  const switchOrganization = useCallback(async (orgId: string) => {
+    const org = organizations.find((item) => item.id === orgId);
+    if (org) setCurrentOrg(org);
   }, [organizations]);
 
   const hasOrgRole = useCallback((role: OrgRole): boolean => {
-    if (!currentOrg) return false;
-
-    const roleHierarchy: OrgRole[] = ['OWNER', 'ADMIN', 'DOCTOR', 'ANALYST', 'VIEWER'];
-    const currentIndex = roleHierarchy.indexOf(currentOrg.orgRole);
-    const requiredIndex = roleHierarchy.indexOf(role);
-
-    return currentIndex <= requiredIndex;
+    return currentOrg?.orgRole === role;
   }, [currentOrg]);
 
   const hasAnyOrgRole = useCallback((...roles: OrgRole[]): boolean => {
-    if (!currentOrg) return false;
-    return roles.includes(currentOrg.orgRole);
+    return !!currentOrg && roles.includes(currentOrg.orgRole);
   }, [currentOrg]);
 
-  const isSuperAdmin = useCallback((): boolean => {
-    return user?.systemRole === 'SUPER_ADMIN';
+  const isPlatformAdmin = useCallback((): boolean => {
+    return user?.systemRole === 'PLATFORM_ADMIN' || user?.systemRole === 'SUPER_ADMIN';
   }, [user]);
 
-  // Listen for auth-expired event from api.ts refresh failure
+  const isSuperAdmin = isPlatformAdmin;
+  const hasPermission = useCallback((permission: BusinessPermission) => userHasPermission(user, permission, getRuntimeBackendFlavor()), [user]);
+
+  const refreshSession = useCallback(async () => {
+    if (!user) return;
+    try {
+      setUser(await authApi.getCurrentUser());
+    } catch {
+      setUser((previous) => previous ? { ...previous, permissions: [] } : previous);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    const refresh = () => { void refreshSession(); };
+    window.addEventListener('focus', refresh);
+    window.addEventListener('schema:permissions-changed', refresh);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('schema:permissions-changed', refresh);
+    };
+  }, [refreshSession]);
+
   useEffect(() => {
     const handleAuthExpired = () => {
-      logout();
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
-      }
+      resetSession();
+      if (typeof window === 'undefined' || isPublicAuthPath(window.location.pathname)) return;
+      const next = `${window.location.pathname}${window.location.search}`;
+      window.location.href = `/login?next=${encodeURIComponent(next)}`;
     };
     window.addEventListener('schema:auth-expired', handleAuthExpired);
     return () => window.removeEventListener('schema:auth-expired', handleAuthExpired);
-  }, [logout]);
+  }, [resetSession]);
 
   const value: AuthContextType = {
+    hasPermission,
+    refreshSession,
     user,
     organizations,
     currentOrg,
@@ -154,23 +183,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     isAuthenticated: !!user,
     login,
     logout,
+    updateProfile,
+    changePassword,
     switchOrganization,
     hasOrgRole,
     hasAnyOrgRole,
+    isPlatformAdmin,
     isSuperAdmin,
   };
 
   return (
     <AuthContext.Provider value={value}>
-      {children}
+      <BusinessPermissionContext.Provider value={hasPermission}>{children}</BusinessPermissionContext.Provider>
     </AuthContext.Provider>
   );
 }
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (context === undefined) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 }

@@ -1,15 +1,12 @@
 'use client';
 
 import * as React from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button, Input } from '@schema/ui-kit';
 import { UserPlus } from 'lucide-react';
-import { ApiError, setAuthTokens } from '@/lib/api';
-import { getRuntimeApiBaseUrl } from '@/lib/runtime-config';
+import { ApiError, api } from '@/lib/api';
 
 export default function RegisterPage() {
-  const router = useRouter();
   const [form, setForm] = React.useState({
     email: '',
     password: '',
@@ -36,32 +33,14 @@ export default function RegisterPage() {
 
     setLoading(true);
     try {
-      const res = await fetch(
-        `${getRuntimeApiBaseUrl()}/v1/auth/register`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({
-            email,
-            password,
-            name,
-            org_name: orgName,
-            org_slug: orgSlug,
-          }),
-        }
-      );
-
-      const json = await res.json();
-      if (!res.ok) {
-        throw new ApiError(res.status, res.statusText, json);
-      }
-
-      const data = json?.data ?? json;
-      if (data.access_token) {
-        setAuthTokens(data.access_token, data.refresh_token, data.expires_at);
-      }
-      router.push('/dashboard');
+      await api.post('/v1/auth/register', {
+        email,
+        password,
+        name,
+        org_name: orgName,
+        org_slug: orgSlug,
+      }, { coreApi: false });
+      window.location.href = '/dashboard';
     } catch (err) {
       if (err instanceof ApiError) {
         const msg = (err.data as any)?.error || '注册失败';

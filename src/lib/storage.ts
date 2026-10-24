@@ -6,8 +6,10 @@
 const PREFIX = 'schema';
 
 export const STORAGE_KEYS = {
-  /** Auth tokens: { accessToken, refreshToken, expiresAt } */
+  /** Legacy token cache. Cookie sessions remove this key. */
   TOKENS: `${PREFIX}_auth_tokens`,
+  LEGACY_AUTH_TOKENS: `${PREFIX}_auth_tokens`,
+  ACTIVE_UPLOAD: `${PREFIX}:active-upload:v1`,
   /** Current user profile */
   USER: `${PREFIX}_auth_user`,
   /** User's organizations */

@@ -5,7 +5,7 @@ import { Button, Input, DataTable, Tooltip } from '@schema/ui-kit';
 import type { Column } from '@schema/ui-kit';
 import { Search, Plus, Download, Upload, Trash2, Pencil, CheckCircle, XCircle } from 'lucide-react';
 import { NewSampleModal, EditSampleModal } from './components';
-import { mockSamples } from './mock-data';
+import { createSample, deleteSample, listSamples, updateSample } from '@/lib/samples';
 import type { Sample } from './types';
 import { GENDER_CONFIG, TUMOR_TYPE_ICONS } from './types';
 import type { NewSampleFormData, EditSampleFormData } from './components';
@@ -81,7 +81,23 @@ export default function SamplesPage() {
   const [searchQuery, setSearchQuery] = React.useState('');
   const [isNewSampleModalOpen, setIsNewSampleModalOpen] = React.useState(false);
   const [editingSample, setEditingSample] = React.useState<Sample | null>(null);
-  const [samples, setSamples] = React.useState<Sample[]>(mockSamples);
+  const [samples, setSamples] = React.useState<Sample[]>([]);
+  const [loadError, setLoadError] = React.useState('');
+  const [loadingSamples, setLoadingSamples] = React.useState(true);
+
+  const reloadSamples = React.useCallback(async () => {
+    setLoadingSamples(true);
+    try {
+      setSamples(await listSamples());
+      setLoadError('');
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : '无法读取样本');
+    } finally {
+      setLoadingSamples(false);
+    }
+  }, []);
+
+  React.useEffect(() => { void reloadSamples(); }, [reloadSamples]);
 
   const handleDownloadTemplate = () => {
     const templateContent = `样本编号,内部编号,批次,性别,年龄,样本类型,核酸类型,肿瘤类型,临床分期,取样方式
@@ -105,34 +121,42 @@ a1b2c3d4-e5f6-7890-abcd-ef1234567890,INT-001,BATCH-2024-001,男,58,FFPE,DNA,肺�
     );
   }, [searchQuery, samples]);
 
-  const handleNewSample = (data: NewSampleFormData) => {
-    console.log('新建样本:', data);
-    setIsNewSampleModalOpen(false);
+  const toWriteInput = (data: NewSampleFormData | EditSampleFormData) => ({
+    internalId: data.internalId,
+    gender: data.gender,
+    age: data.age ? Number(data.age) : undefined,
+    sampleType: data.sampleType,
+    batch: data.batch,
+    remark: data.remark,
+  });
+
+  const handleNewSample = async (data: NewSampleFormData) => {
+    try {
+      await createSample(toWriteInput(data));
+      setIsNewSampleModalOpen(false);
+      await reloadSamples();
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : '新建样本失败');
+    }
   };
 
-  const handleEditSample = (id: string, data: EditSampleFormData) => {
-    setSamples(prev => prev.map(s => {
-      if (s.id !== id) return s;
-      return {
-        ...s,
-        internalId: data.internalId,
-        batch: data.batch,
-        gender: data.gender,
-        age: data.age ? parseInt(data.age) : undefined,
-        birthDate: data.birthDate,
-        sampleType: data.sampleType,
-        nucleicAcidType: data.nucleicAcidType,
-        tumorType: data.tumorType,
-        pairedSampleId: data.pairedSampleId || undefined,
-        remark: data.remark,
-      };
-    }));
-    console.log('编辑样本:', id, data);
+  const handleEditSample = async (id: string, data: EditSampleFormData) => {
+    try {
+      await updateSample(id, toWriteInput(data));
+      setEditingSample(null);
+      await reloadSamples();
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : '保存样本失败');
+    }
   };
 
-  const handleDeleteSample = (id: string) => {
-    setSamples(prev => prev.filter(s => s.id !== id));
-    console.log('删除样本:', id);
+  const handleDeleteSample = async (id: string) => {
+    try {
+      await deleteSample(id);
+      await reloadSamples();
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : '删除样本失败');
+    }
   };
 
   const columns: Column<Sample>[] = [
@@ -255,7 +279,10 @@ a1b2c3d4-e5f6-7890-abcd-ef1234567890,INT-001,BATCH-2024-001,男,58,FFPE,DNA,肺�
     <div className="flex h-full">
       <div className="flex-1">
         <div className="p-6 h-full overflow-auto">
-          <h2 className="text-lg font-medium text-fg-default mb-4">样本管理</h2>
+          <h2 className="text-lg font-medium text-fg-default mb-2">样本管理</h2>
+          <p className="mb-4 text-xs text-fg-muted">癌种、核酸类型、配对样本和分期仍保留在表单里。Loligo 目前只保存样本编号、类型、批次和备注等公共字段，肿瘤专有字段不会写入。</p>
+          {loadingSamples && <p className="mb-3 text-sm text-fg-muted">正在读取样本…</p>}
+          {loadError && <p className="mb-3 text-sm text-danger-fg">{loadError}</p>}
           <div className="flex items-center justify-between mb-4">
             <div className="w-64">
               <Input placeholder="搜索样本编号、内部编号..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} leftElement={<Search className="w-4 h-4" />} />
