@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { historySourceTarget } from './history-support';
 import { HistoryEngine, historyPosition, type HistoryQuery, type FocusRow } from './history-engine';
 
 const query: HistoryQuery = { table: 'snv-indel', search: '', includeWithdrawn: false, filters: {}, sort: 'detectionCount', direction: 'desc', page: 1, pageSize: 25 };
@@ -65,4 +66,19 @@ describe('history browser aggregation', () => {
     expect(filtered.total).toBe(1); expect(filtered.groups[0].fields.gnomadAF).toBe('0.0001');
     engine.clear(); expect(engine.query(query).total).toBe(0);
   });
+});
+
+it('filters current CNV and split fusion fields and targets the original record', () => {
+  const engine = new HistoryEngine();
+  const variant = row('fusion-1', 'task-fusion', {
+    table: 'fusion', fields: { gene5: 'EML4', gene3: 'ALK', breakpoint5: 'chr2:100', breakpoint3: 'chr2:300' },
+  });
+  engine.apply([variant, row('cnv-1', 'task-cnv', { table: 'cnv-gene', classification: 'Tier I', fields: { gene: 'ERBB2', copies: '7.2' } })], {});
+  expect(engine.query({ ...query, table: 'fusion', filters: { gene3: 'ALK' } }).total).toBe(1);
+  expect(engine.query({ ...query, table: 'cnv-gene', filters: { copies: '>=7', classification: 'tier i' } }).total).toBe(1);
+  expect(engine.query({ ...query, table: 'cnv-gene', filters: { copies: '<7' } }).total).toBe(0);
+  expect(historySourceTarget(variant)).toBe('/tasks/task-fusion?tab=fusion&row=fusion-1');
+  const hotspot = row('hot-1', 'task-hot', { table: 'hotspot' });
+  const url = new URL(historySourceTarget(hotspot), 'https://example.invalid');
+  expect(JSON.parse(url.searchParams.get('columnFilters')!)).toContainEqual({ column: 'Position', operator: 'equals', value: '123' });
 });

@@ -33,6 +33,7 @@ export interface PreviewSample {
 }
 
 export const previewPipelineVersion = 'mock-v1';
+export const singleInterpretationExampleId = 'preview-task-12';
 const fixtures = Array.from({ length: 24 }, (_, index) => {
   const example = inputExamples[index % inputExamples.length];
   const status = example.statuses[Math.floor(index / inputExamples.length)];
@@ -40,6 +41,8 @@ const fixtures = Array.from({ length: 24 }, (_, index) => {
   const cancer = index === 18 ? '弥漫大 B 细胞淋巴瘤' : example.cancer;
   const group = workflowNames[example.template];
   const pipeline = `${group} (${workflow.genome})`;
+  const id = index === 0 ? 'preview-task' : 'preview-task-' + (index + 1);
+  const isSingleInterpretationExample = id === singleInterpretationExampleId;
   const internalId = `DEMO-${String(index + 1).padStart(4, '0')}`;
   const createdAt = new Date(Date.UTC(2026, 10, 20, 1) - index * 3_600_000).toISOString();
   const dataKind = example.template === 'rna_fusion' ? 'RNA' : 'DNA';
@@ -48,7 +51,8 @@ const fixtures = Array.from({ length: 24 }, (_, index) => {
   const sample: PreviewSample = {
     id: index === 0 ? 'detail-preview' : `detail-preview-${index + 1}`,
     internal_id: internalId, gender: example.cancer === '乳腺癌' || index % 2 === 1 ? 'female' : 'male', age: 42 + index,
-    sample_type: example.type, cancer_type: cancer, collection_site: example.site,
+    sample_type: isSingleInterpretationExample ? 'FFPE 肿瘤组织' : example.type, cancer_type: cancer,
+    collection_site: isSingleInterpretationExample ? '胃窦' : example.site,
     clinical_diagnosis: '合成样本，仅用于界面检查', batch: `DEMO-${String(index % 3 + 1).padStart(2, '0')}`,
     matched_pair: hasReads ? makeReads(`${internalId}_${dataKind}`) : null,
     created_at: createdAt, updated_at: createdAt,
@@ -60,7 +64,7 @@ const fixtures = Array.from({ length: 24 }, (_, index) => {
   } : undefined;
   const hasResults = status === 'completed' || status === 'pending_interpretation';
   const task = {
-    id: index === 0 ? 'preview-task' : `preview-task-${index + 1}`,
+    id,
     name: `${pipeline} · ${internalId}`,
     sampleId: sample.id, internalId, pipeline, pipelineId: workflow.id, pipelineVersion: previewPipelineVersion,
     ...(normalSample ? { normalSampleId: normalSample.id, normalSampleInternalId: normalSample.internal_id } : {}),

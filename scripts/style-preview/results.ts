@@ -1,4 +1,5 @@
 export * from '../../src/app/(main)/tasks/[uuid]/result-api';
+import type { ResultRowAdjustmentEvent } from '../../src/app/(main)/tasks/[uuid]/result-api';
 import type { ResultContext, SNVIndel } from '../../src/app/(main)/tasks/[uuid]/types';
 import { previewOncologyResults, previewSNVRows } from './oncology-results';
 import { isOncologyResultTab, oncologyReviewTables, type OncologyResultTab } from '../../src/app/(main)/tasks/[uuid]/oncology-results';
@@ -8,11 +9,13 @@ const genes = ['BRCA1', 'EGFR', 'TP53', 'KRAS', 'PIK3CA', 'BRAF', 'ERBB2', 'ALK'
 const rows = Array.from({ length: 55393 }, (_, i) => ({ id: `demo-snv-${i}`, gene: genes[i % genes.length], chromosome: String(i % 22 + 1), position: 100000 + i * 37, ref: 'A', alt: 'G', variantType: 'SNV', zygosity: 'Heterozygous', transcript: `NM_${String(1000 + i % 50).padStart(6, '0')}`, hgvsc: `c.${i % 600 + 1}A>G`, hgvsp: `p.(Lys${i % 200 + 1}Arg)`, consequence: 'missense_variant', acmgClassification: i % 6 === 0 ? 'Likely_Pathogenic' : 'VUS', acmgCriteria: i % 6 === 0 ? ['PM2', 'PP3'] : [], gnomadAF: 0.0001, clinvarSignificance: i === 0 ? 'Pathogenic/Likely_pathogenic' : 'Uncertain_significance', pinned: i < 3, reported: false, interpretation: '', alleleFrequency: 0.48, depth: 132, annotationValues: { Gene: genes[i % genes.length], Position: String(100000 + i * 37), VAF: '0.48', Depth: '132', GnomAD_AF: '0.0001', ClinVar_Sig: i === 0 ? 'Pathogenic/Likely_pathogenic' : 'Uncertain_significance', GenCC_disease_title: '示例疾病关联 A；示例疾病关联 B', GenCC_moi_title: '常染色体显性', GenCC_moi_curie: 'HP:0000006', GenCC_disease_original_curie: '示例疾病标识 A；示例疾病标识 B' }, automaticAcmg: { score: i % 6 === 0 ? 6 : 2, classification: i % 6 === 0 ? 'Likely_Pathogenic' : 'VUS', criteria: [{ code: 'PM2', strength: 'supporting', source: 'gnomAD' }], pending: ['缺少家系证据'], profile: 'acmg-snv-points-v2' } }));
 const columns = ['Gene', 'Chromosome', 'Position', 'VAF', 'Depth', 'GnomAD_AF', 'ClinVar_Sig'];
 const oncologySNVRows = new Map<string, SNVIndel[]>();
-function getPreviewSNVRows(taskId: string) {
+export function getPreviewSNVRows(taskId: string) {
   const fixture = findPreviewTaskFixture(taskId);
   if (!fixture) return rows;
   if (!oncologySNVRows.has(taskId)) oncologySNVRows.set(taskId, previewSNVRows(fixture));
-  return oncologySNVRows.get(taskId)!;
+  const variants = oncologySNVRows.get(taskId)!;
+  for (const variant of variants) variant.focused = readPreviewMark(taskId, 'snv-indel', variant.id, 'focused');
+  return variants;
 }
 export const getSNVIndels = async (taskId: string, state: any) => {
   let filtered = getPreviewSNVRows(taskId).filter(row => !state.searchQuery ||
@@ -23,22 +26,60 @@ export const getSNVIndels = async (taskId: string, state: any) => {
   return { data: filtered.slice((state.page - 1) * state.pageSize, state.page * state.pageSize), total: filtered.length, page: state.page, pageSize: state.pageSize, columns, columnTypes: { Gene: 'text', Position: 'number', VAF: 'number', Depth: 'number', GnomAD_AF: 'number' } };
 };
 export const getGeneLists = async () => [];
-export const getResultRowAdjustmentHistory = async () => [];
-function reviewKey(taskId: string, tab: OncologyResultTab, rowId: string, mark: 'focused' | 'pinned') {
+type PreviewReviewTable = OncologyResultTab | 'snv-indel';
+
+function reviewHistoryKey(taskId: string, tab: string, rowId: string) {
+  return 'zhiji-preview:oncology-review-history:' + JSON.stringify([taskId, tab, rowId]);
+}
+function readReviewHistory(key: string): ResultRowAdjustmentEvent[] {
+  try {
+    const stored = JSON.parse(localStorage.getItem(key) ?? '[]');
+    return Array.isArray(stored) ? stored : [];
+  } catch {
+    return [];
+  }
+}
+export const getPreviewReviewEvents = (taskId: string, tab: string, rowId: string) =>
+  readReviewHistory(reviewHistoryKey(taskId, tab, rowId));
+export const getResultRowAdjustmentHistory = async (taskId: string, tab: string, rowId: string) =>
+  getPreviewReviewEvents(taskId, tab, rowId);
+
+const seededFocus: Record<string, Partial<Record<PreviewReviewTable, readonly string[]>>> = {
+  'preview-task': {
+    'snv-indel': ['kr-g12d'], 'cnv-gene': ['cnv-erbb2'], fusion: ['fusion-01'],
+    hotspot: ['hot-kr-g12d'], 'cnv-chrom': ['cnv-17q'], germline: ['germline-01'],
+  },
+  'preview-task-7': { fusion: ['fusion-01'] },
+  'preview-task-12': { 'snv-indel': ['pik-h1047r'], 'cnv-gene': ['cnv-erbb2'], hotspot: ['hot-pik-h1047r'] },
+};
+export function isSeededPreviewFocus(taskId: string, tab: PreviewReviewTable, rowId: string) {
+  return seededFocus[taskId]?.[tab]?.includes(rowId) ?? false;
+}
+function reviewKey(taskId: string, tab: PreviewReviewTable, rowId: string, mark: 'focused' | 'pinned') {
   return 'zhiji-preview:oncology-review:' + JSON.stringify([taskId, tab, rowId, mark]);
 }
-function readMark(taskId: string, tab: OncologyResultTab, rowId: string, mark: 'focused' | 'pinned') {
-  return localStorage.getItem(reviewKey(taskId, tab, rowId, mark)) === 'true';
+export function readPreviewMark(taskId: string, tab: PreviewReviewTable, rowId: string, mark: 'focused' | 'pinned') {
+  const stored = localStorage.getItem(reviewKey(taskId, tab, rowId, mark));
+  return stored === null ? mark === 'focused' && isSeededPreviewFocus(taskId, tab, rowId) : stored === 'true';
 }
 function saveOncologyMark(taskId: string, tab: string, rowId: string, mark: 'focused' | 'pinned', value: boolean) {
-  if (!isOncologyResultTab(tab) || !oncologyReviewTables.has(tab)) return;
+  if (tab !== 'snv-indel' && (!isOncologyResultTab(tab) || !oncologyReviewTables.has(tab))) return;
   const fixture = findPreviewTaskFixture(taskId);
-  if (!fixture || !previewOncologyResults(fixture)[tab]?.rows.some(row => row.id === rowId)) {
+  const available = fixture && (tab === 'snv-indel' ? getPreviewSNVRows(taskId) : previewOncologyResults(fixture)[tab]?.rows);
+  if (!available?.some(row => row.id === rowId)) {
     throw new Error('Synthetic result unavailable');
   }
   const key = reviewKey(taskId, tab, rowId, mark);
-  if (value) localStorage.setItem(key, 'true');
-  else localStorage.removeItem(key);
+  const before = readPreviewMark(taskId, tab, rowId, mark);
+  if (before === value) return;
+  const historyKey = reviewHistoryKey(taskId, tab, rowId);
+  const event: ResultRowAdjustmentEvent = {
+    id: crypto.randomUUID(), before: { [mark]: before }, after: { [mark]: value },
+    reason: mark === 'focused' ? (value ? '关注变异' : '取消关注') : (value ? '手动置顶' : '取消置顶'),
+    actor: 'Mock analyst', createdAt: new Date().toISOString(),
+  };
+  localStorage.setItem(historyKey, JSON.stringify([event, ...readReviewHistory(historyKey)].slice(0, 50)));
+  localStorage.setItem(key, String(value));
   window.dispatchEvent(new Event('zhiji:result-adjustment-saved'));
 }
 export async function getOncologyResultTable(taskUuid: string, tab: OncologyResultTab) {
@@ -46,7 +87,7 @@ export async function getOncologyResultTable(taskUuid: string, tab: OncologyResu
   const entry = fixture && previewOncologyResults(fixture)[tab];
   if (entry?.state !== 'ready') throw new Error('Synthetic result unavailable');
   return { rows: oncologyReviewTables.has(tab) ? entry.rows.map(row => ({
-    ...row, focused: readMark(taskUuid, tab, row.id, 'focused'), pinned: readMark(taskUuid, tab, row.id, 'pinned'),
+    ...row, focused: readPreviewMark(taskUuid, tab, row.id, 'focused'), pinned: readPreviewMark(taskUuid, tab, row.id, 'pinned'),
   })) : entry.rows };
 }
 export async function getResultContext(taskUuid: string): Promise<ResultContext> {
@@ -64,7 +105,7 @@ export async function getResultContext(taskUuid: string): Promise<ResultContext>
   const oncology = Object.fromEntries(modules.map(([tab, { state, total }]) => [tab, { state, total }]));
   const types: ResultContext['types'] = Object.fromEntries(modules.flatMap(([tab, entry]) => entry.state === 'ready'
     ? [[tab, { total: entry.rows.length, reviewed: entry.rows.filter(row => row.values.review === 'oncologyResults.reviewed').length, focused: isOncologyResultTab(tab) && oncologyReviewTables.has(tab)
-      ? entry.rows.filter(row => readMark(taskUuid, tab, row.id, 'focused')).length : 0 }]]
+      ? entry.rows.filter(row => readPreviewMark(taskUuid, tab, row.id, 'focused')).length : 0 }]]
     : []));
   const variants = getPreviewSNVRows(taskUuid);
   if (task.template !== 'rna_fusion') types['snv-indel'] = {
@@ -115,7 +156,7 @@ export const pinVariant = async (taskId: string, table: string, id: string, valu
 };
 export const focusVariant = async (taskId: string, table: string, id: string, value: boolean) => {
   const variant = table === 'snv-indel' && getPreviewSNVRows(taskId).find(row => row.id === id);
-  if (variant) variant.focused = value;
+  if (variant && !findPreviewTaskFixture(taskId)) variant.focused = value;
   else saveOncologyMark(taskId, table, id, 'focused', value);
 };
 export const reportVariant = async () => {};

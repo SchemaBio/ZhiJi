@@ -1,18 +1,20 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { ChevronRight, X } from 'lucide-react';
-import { WorkspaceInspector } from '@/components/shared/WorkspaceInspector';
+import { ChevronRight } from 'lucide-react';
+import { TableViewControls, useTableView } from '@/components/shared/TableViewControls';
 import { useBusinessPermissions } from '@/components/providers/BusinessPermissionProvider';
 import { useText } from '@/i18n/useText';
 import { focusVariant, getOncologyResultTable, pinVariant } from '../result-api';
-import { oncologyResultModules, oncologyReviewTables, type OncologyResultRow, type OncologyResultSummary, type OncologyResultTab, type OncologyValue, type OncologyTab, type SNVResultLocus } from '../oncology-results';
+import { oncologyColumnValue, oncologyResultModules, oncologyReviewTables, type OncologyResultRow, type OncologyResultSummary, type OncologyResultTab, type OncologyValue, type OncologyTab, type SNVResultLocus } from '../oncology-results';
 import type { ResultContext, TabConfig } from '../types';
 import { FocusCheckbox, FocusColumnHeader, PinCheckbox, PinColumnHeader } from './ReviewCheckboxes';
+import { OncologyResultInspector } from './OncologyResultInspector';
 import { CopyTableButton } from './CopyTableButton';
 
 type Props = {
   taskId: string;
+  referenceGenome?: string;
   tab: OncologyResultTab;
   summary?: OncologyResultSummary;
   activeRow: string | null;
@@ -36,15 +38,18 @@ function valueTone(value: OncologyValue | undefined) {
   }
 }
 
-export function OncologyResultView({ taskId, tab, summary, activeRow, tabs, permissions, onNavigate }: Props) {
+export function OncologyResultView({ taskId, referenceGenome, tab, summary, activeRow, tabs, permissions, onNavigate }: Props) {
   const t = useText();
   const { hasPermission } = useBusinessPermissions();
   const showReviewMarks = oncologyReviewTables.has(tab);
   const canManage = hasPermission('interpretation_reports.manage');
   const pendingRows = useRef(new Set<string>());
   const [savingRows, setSavingRows] = useState<Set<string>>(() => new Set());
+  const [historyRevision, setHistoryRevision] = useState(0);
   const [markError, setMarkError] = useState<string | null>(null);
   const config = oncologyResultModules[tab];
+  const optionalColumns = 'optionalColumns' in config ? config.optionalColumns : [];
+  const view = useTableView(optionalColumns);
   const state = summary?.state ?? 'unavailable';
   const [result, setResult] = useState<OncologyResultRow[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -73,16 +78,20 @@ export function OncologyResultView({ taskId, tab, summary, activeRow, tabs, perm
     if (typeof value === 'number') return value.toLocaleString(t.locale, { maximumFractionDigits: 6 });
     return value.startsWith('oncologyResults.') ? t(value) : value;
   };
-  const columns: readonly string[] = config.columns;
+  const tableColumns = [...config.columns, ...optionalColumns].map(id => ({
+    id, header: label(id), accessor: (row: OncologyResultRow) => display(oncologyColumnValue(row, id)),
+  }));
+  const columns = view.apply(tableColumns).filter(column => column.visible).map(column => column.id);
+  const cellPadding = view.density === 'compact' ? 'px-3 py-2' : 'px-3 py-3';
   const pageSize = 50;
   const rows = result ?? [];
-  const matches = rows.filter(row => (!filter || String(row.values[filter.key] ?? row.details?.[filter.key]) === filter.value) &&
-    (!query.trim() || Object.values(row.values).some(value => display(value).toLocaleLowerCase(t.locale).includes(query.trim().toLocaleLowerCase(t.locale)))));
+  const matches = rows.filter(row => (!filter || String(oncologyColumnValue(row, filter.key)) === filter.value) &&
+    (!query.trim() || Object.values({ ...row.details, ...row.values }).some(value => display(value).toLocaleLowerCase(t.locale).includes(query.trim().toLocaleLowerCase(t.locale)))));
   const priority = (row: OncologyResultRow) => row.focused ? 0 : row.pinned ? 1 : 2;
   if (showReviewMarks || sort) matches.sort((left, right) => {
     const markedOrder = showReviewMarks ? priority(left) - priority(right) : 0;
     if (markedOrder !== 0 || !sort) return markedOrder;
-    const a = left.values[sort.key], b = right.values[sort.key];
+    const a = oncologyColumnValue(left, sort.key), b = oncologyColumnValue(right, sort.key);
     if (a == null) return b == null ? 0 : 1;
     if (b == null) return -1;
     const order = typeof a === 'number' && typeof b === 'number' ? a - b : display(a).localeCompare(display(b), t.locale, { numeric: true });
@@ -108,6 +117,7 @@ export function OncologyResultView({ taskId, tab, summary, activeRow, tabs, perm
     try {
       const save = mark === 'focused' ? focusVariant : pinVariant;
       await save(taskId, tab, rowId, value);
+      setHistoryRevision(revision => revision + 1);
       setResult(current => current?.map(row => row.id === rowId ? { ...row, [mark]: value } : row) ?? null);
     } catch {
       setMarkError(t(mark === 'focused' ? 'tasks.unableToSaveFocusSelection594b1f' : 'tasks.unableToSavePinStatus87ecc6'));
@@ -126,7 +136,7 @@ export function OncologyResultView({ taskId, tab, summary, activeRow, tabs, perm
         </div>
         {state === 'ready' && matches.length > 0 && <CopyTableButton rows={[
           columns.map(label),
-          ...matches.map(row => columns.map(key => display(row.values[key]))),
+          ...matches.map(row => columns.map(key => display(oncologyColumnValue(row, key)))),
         ]} />}
       </header>
 
@@ -153,7 +163,7 @@ export function OncologyResultView({ taskId, tab, summary, activeRow, tabs, perm
                       className="min-w-0 rounded-md border border-border-default bg-canvas-default px-2.5 py-1.5 text-sm" />
                     {config.filters.map(key => {
                       const options = [...new Map(rows.flatMap(row => {
-                        const value = row.values[key] ?? row.details?.[key];
+                        const value = oncologyColumnValue(row, key);
                         return value == null ? [] : [[String(value), display(value)] as const];
                       })).entries()];
                       if (options.length === 0) return null;
@@ -164,6 +174,7 @@ export function OncologyResultView({ taskId, tab, summary, activeRow, tabs, perm
                         {options.map(([value, text]) => <option key={value} value={value}>{text}</option>)}
                       </select>;
                     })}
+                    {'optionalColumns' in config && <TableViewControls columns={tableColumns} view={view} />}
                     <span className="ml-auto text-xs tabular-nums text-fg-muted">{label('count')} {matches.length.toLocaleString(t.locale)}</span>
                   </div>
                   <div className="min-h-0 flex-1 overflow-auto">
@@ -180,7 +191,9 @@ export function OncologyResultView({ taskId, tab, summary, activeRow, tabs, perm
                         </th>)}</tr>
                       </thead>
                       <tbody>{matches.slice(current * pageSize, (current + 1) * pageSize).map(row => (
-                        <tr key={row.id} className={'border-t border-border-default ' + (selected?.id === row.id ? 'bg-accent-subtle' : 'hover:bg-canvas-subtle')}>
+                        <tr key={row.id} onClick={event => {
+                          if (event.target instanceof Element && !event.target.closest('button, a, input, select')) setSelection(row.id);
+                        }} className={'cursor-pointer border-t border-border-default ' + (selected?.id === row.id ? 'bg-accent-subtle' : 'hover:bg-canvas-subtle')}>
                           {showReviewMarks && <>
                             <td className="px-2 py-1 text-center">
                               <FocusCheckbox checked={row.focused === true} disabled={!canManage || !permissions?.canFocus || savingRows.has(row.id)}
@@ -192,15 +205,15 @@ export function OncologyResultView({ taskId, tab, summary, activeRow, tabs, perm
                             </td>
                           </>}
                           {columns.map((key, index) => {
-                            const value = row.values[key];
+                            const value = oncologyColumnValue(row, key);
                             const text = display(value);
-                            if (index === 0) return <th scope="row" key={key} className="px-3 py-2 font-medium">
-                              <button type="button" onClick={() => setSelection(row.id)} className="inline-flex items-center gap-1 whitespace-nowrap text-left text-accent-fg hover:underline">
+                            if (index === 0) return <th scope="row" key={key} className={cellPadding + " font-medium"}>
+                              <button type="button" aria-expanded={selected?.id === row.id} onClick={() => setSelection(row.id)} className="inline-flex items-center gap-1 whitespace-nowrap text-left text-accent-fg hover:underline">
                                 {text}<ChevronRight size={13} aria-hidden="true" />
                               </button>
                             </th>;
                             const links = key === 'related' ? linked(row) : [];
-                            return <td key={key} className="whitespace-nowrap px-3 py-2 tabular-nums">
+                            return <td key={key} className={cellPadding + " whitespace-nowrap tabular-nums"}>
                               {links.length ? <button type="button" className="text-accent-fg hover:underline" onClick={() => openRelated(links[0])}>{display(links[0].label)}</button>
                                 : ['status', 'review', 'qc'].includes(key) && value ? <span className={'rounded px-1.5 py-0.5 text-xs ' + valueTone(value)}>{text}</span> : text}
                             </td>;
@@ -216,30 +229,9 @@ export function OncologyResultView({ taskId, tab, summary, activeRow, tabs, perm
                     <button type="button" disabled={current === lastPage} onClick={() => setPage(current + 1)} className="disabled:opacity-40">{label('next')}</button>
                   </div>}
                 </div>
-                {selected && <WorkspaceInspector label={label('details')} onClose={close}>
-                  <div className="flex items-start justify-between gap-2 border-b border-border-default px-4 py-3">
-                    <div><p className="text-xs text-fg-muted">{title}</p><h3 className="font-semibold">{display(selected.values[columns[0]])}</h3></div>
-                    <button type="button" aria-label={label('close')} className="rounded p-1 hover:bg-canvas-subtle" onClick={close}><X size={17} /></button>
-                  </div>
-                  {tab === 'cnv-chrom' && typeof selected.values.fraction === 'number' && <div className="shrink-0 border-b border-border-default px-4 py-3">
-                    <p className="mb-1 text-xs text-fg-muted">{label('fraction')} · {display(selected.values.fraction)}%</p>
-                    <meter className="block w-full" aria-label={label('fraction')} min={0} max={100} value={selected.values.fraction} />
-                  </div>}
-                  {tab === 'fusion' && selected.values.exons && <div className="shrink-0 border-b border-border-default px-4 py-3 text-sm">
-                    <p>{display(selected.values.partners)}</p>
-                    <p className="text-xs text-fg-muted">{display(selected.values.exons)}</p>
-                  </div>}
-                  <dl className="grid min-h-0 flex-1 content-start gap-3 overflow-auto px-4 py-3 text-sm">
-                    {Object.entries({ ...Object.fromEntries(columns.map(key => [key, selected.values[key]])), ...selected.details })
-                      .filter(([key]) => key !== 'related').map(([key, value]) => <div key={key}>
-                        <dt className="text-xs text-fg-muted">{key.startsWith('detail.') ? key.slice(7) : label(key)}</dt>
-                        <dd className="break-words text-fg-default">{display(value)}</dd>
-                      </div>)}
-                  </dl>
-                  {linked(selected).length > 0 && <ul className="space-y-2 border-t border-border-default px-4 py-3 text-sm">
-                    {linked(selected).map(link => <li key={link.tab + ':' + link.id}><button type="button" className="text-accent-fg hover:underline" onClick={() => openRelated(link)}>{display(link.label)} →</button></li>)}
-                  </ul>}
-                </WorkspaceInspector>}
+                {selected && <OncologyResultInspector key={selected.id} taskId={taskId} tab={tab} row={selected}
+                  referenceGenome={referenceGenome} related={linked(selected)} onNavigate={openRelated}
+                  onClose={close} historyRevision={historyRevision} />}
               </div>
             </>}
     </section>

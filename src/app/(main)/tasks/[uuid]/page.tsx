@@ -17,6 +17,7 @@ import { tasksApi } from '@/lib/tasks';
 import { TaskRuntimeTab } from './components/TaskRuntimeTab';
 import {AssessmentStatusBar} from './components/AssessmentStatusBar';
 import { getOncologyTabs, isOncologyResultTab, isPairedOncologyTask, isRnaFusionTask, type SNVResultLocus } from './oncology-results';
+import { ChemotherapyResultView } from './components/ChemotherapyResultView';
 import { OncologyResultView } from './components/OncologyResultView';
 import { useTabState } from './hooks/useTabState';
 import { useVariantPreload } from './hooks/useVariantPreload';
@@ -294,10 +295,15 @@ export default function AnalysisDetailPage() {
         referenceGenome={resultContext?.reference.declaredId}
         filterState={getFilterState(table)} onFilterChange={state => setFilterState(table, state)} />;
     }
+    if (oncologyTabs?.some(tab => tab.id === activeTab) && activeTab === 'chemotherapy') {
+      return <ChemotherapyResultView key={uuid + ':' + (activeRow ?? '')} taskId={uuid} activeRow={activeRow}
+        summary={resultContext?.oncology?.chemotherapy} referenceGenome={resultContext?.reference.declaredId}
+        clearActiveRow={() => handleTabChange('chemotherapy')} />;
+    }
     if (oncologyTabs?.some(tab => tab.id === activeTab) && isOncologyResultTab(activeTab)) {
       return <OncologyResultView key={activeTab + ':' + (activeRow ?? '')} taskId={uuid} tab={activeTab}
         summary={resultContext?.oncology?.[activeTab] ?? (resultContext?.state === 'importing' ? { state: 'pending' } : undefined)}
-        activeRow={activeRow} permissions={resultContext?.permissions} tabs={oncologyTabs} onNavigate={handleTabChange} />;
+        activeRow={activeRow} referenceGenome={resultContext?.reference.declaredId} permissions={resultContext?.permissions} tabs={oncologyTabs} onNavigate={handleTabChange} />;
     }
     if (oncologyTabs && activeTab !== 'overview' && activeTab !== 'files' &&
       !oncologyTabs.some(tab => tab.id === activeTab)) return null;

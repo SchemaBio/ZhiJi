@@ -11,8 +11,8 @@ import { ToolbarPopover } from './ToolbarPopover';
 const IDENTITY_COLUMNS = new Set(['focused', 'pinned', 'gene', 'position', 'chromosome', 'startPosition', 'endPosition']);
 const locked = <T,>(column: Column<T>, index: number) => index === 0 || Boolean(column.pinned) || IDENTITY_COLUMNS.has(column.id);
 
-export function useTableView() {
-  const [hidden, setHidden] = React.useState<Set<string>>(() => new Set());
+export function useTableView(initialHidden: readonly string[] = []) {
+  const [hidden, setHidden] = React.useState<Set<string>>(() => new Set(initialHidden));
   const [density, setDensity] = React.useState<'compact' | 'default'>('compact');
   const apply = <T,>(columns: Column<T>[]) => columns.map((column, index) => ({
     ...column, visible: locked(column, index) || !hidden.has(column.id),

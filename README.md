@@ -2,7 +2,7 @@
 
 **English** | [中文](./README.zh-CN.md)
 
-Open-source web frontend for the ZhiJi oncology initial baseline. This baseline still runs the inherited germline analysis workflows, from FASTQ through quality control, variant annotation, and result browsing. Disease and inheritance wording in those screens stays as it is. It connects to a self-hosted [Loligo](https://github.com/SchemaBio/Loligo) API.
+Open-source web frontend for the ZhiJi oncology platform. Connect it to a self-hosted [Loligo](https://github.com/SchemaBio/Loligo) API to manage samples, monitor analysis tasks, and browse results.
 
 Licensed under the [Apache License 2.0](./LICENSE).
 

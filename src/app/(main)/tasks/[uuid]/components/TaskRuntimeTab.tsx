@@ -170,6 +170,7 @@ function areTaskProgressResponsesEqual(
     && analysisEqual
     && nodeLivenessEqual
     && agentLivenessEqual
+    && previous.sepiida_query_unavailable === next.sepiida_query_unavailable
     && sepiidaEqual
     && tasksEqual;
 }
@@ -298,6 +299,12 @@ export function TaskRuntimeTab({ taskId, initialStatus, onResultImportChange }: 
       {error && (
         <div className="flex items-center gap-2 rounded-md border border-warning-muted bg-warning-subtle px-3 py-2 text-sm text-warning-fg">
           <AlertCircle className="h-4 w-4" /> {error}
+        </div>
+      )}
+
+      {progress?.sepiida_query_unavailable && (
+        <div role="status" className="rounded-md border border-warning-muted bg-warning-subtle px-3 py-2 text-sm text-warning-fg">
+          {t('tasks.sepiidaQueryUnavailable')}
         </div>
       )}
 

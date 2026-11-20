@@ -24,19 +24,23 @@ it('keeps failed reads distinct from empty samples and recovers on retry', async
   expect(screen.getByText('没有匹配的样本')).toBeInTheDocument();
 });
 
-it('exports only checked samples, including selections retained while searching', async () => {
+it('exports checked samples retained across pages and searches', async () => {
   const sample = (id: string): Sample => ({ id, internalId: `INT-${id}`, gender: 'unknown', sampleType: '全血', batch: '', clinicalDiagnosis: '', hpoTerms: [], matchedPair: null, matchStatus: 'unmatched', matchMode: '', autoMatchEnabled: false, remark: '', createdAt: '2026-10-12T00:00:00Z', updatedAt: '2026-10-12T00:00:00Z' });
-  const samples = [sample('selected'), sample('unselected')];
+  const samples = [sample('first'), ...Array.from({ length: 14 }, (_, i) => sample(String(i))), sample('last')];
   vi.mocked(listSamples).mockResolvedValue(samples);
   render(<SamplesPage />);
-  await screen.findByText('INT-selected');
+  await screen.findByText('INT-first');
   expect(screen.getAllByRole('columnheader').slice(1, 3).map(header => header.textContent)).toEqual(['内部编号', 'UUID']);
   expect(screen.getByRole('button', { name: '导出已选样本' })).toBeDisabled();
-  const row = screen.getByText('INT-selected').closest('tr')!;
-  fireEvent.click(within(row).getByRole('checkbox'));
-  fireEvent.change(screen.getByPlaceholderText('搜索样本编号、批次、癌种或取材部位…'), { target: { value: 'INT-unselected' } });
-  fireEvent.click(screen.getByRole('button', { name: '导出已选样本 (1)' }));
-  expect(downloadSampleList).toHaveBeenCalledWith([samples[0]], 'zh-CN');
+  expect(screen.getAllByRole('row')).toHaveLength(16);
+  fireEvent.click(within(screen.getByText('INT-first').closest('tr')!).getByRole('checkbox'));
+  fireEvent.click(screen.getByRole('button', { name: '下一页' }));
+  expect(screen.getAllByRole('row')).toHaveLength(2);
+  fireEvent.click(within(screen.getByText('INT-last').closest('tr')!).getByRole('checkbox'));
+  fireEvent.change(screen.getByPlaceholderText('搜索样本编号、批次、癌种或取材部位…'), { target: { value: 'INT-first' } });
+  expect(within(screen.getByText('INT-first').closest('tr')!).getByRole('checkbox')).toBeChecked();
+  fireEvent.click(screen.getByRole('button', { name: '导出已选样本 (2)' }));
+  expect(downloadSampleList).toHaveBeenCalledWith([samples[0], samples[15]], 'zh-CN');
 });
 
 it('does not expose bulk import or template download in SaaS', async()=>{

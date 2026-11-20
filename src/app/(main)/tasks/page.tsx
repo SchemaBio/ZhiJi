@@ -2,6 +2,7 @@
 import { pipelineDisplayName } from '@/lib/builtin-resources';
 import { TaskProgressCell } from '@/components/shared/TaskProgressCell';
 import { MobileRecordList } from '@/components/shared/MobileRecordList';
+import { RecordPagination, useRecordPagination } from '@/components/shared/RecordPagination';
 import { ExampleBadge } from '@/components/shared/ExampleData';
 import {canEditTask} from '@/lib/task-editing';
 import { downloadTaskBatchTemplate } from '@/lib/task-batch-template';
@@ -22,8 +23,7 @@ import { HoverHint } from '@/components/shared/HoverHint';
 import { RetentionNotice, ExpiryCell } from '@/components/shared/ResearchPolicy';
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import * as PopoverPrimitive from '@radix-ui/react-popover';
-import { Input, DataTable, Tooltip } from '@schema/ui-kit';
+import { Input, DataTable } from '@schema/ui-kit';
 import { Tag } from '@/components/shared/Tag';
 import type { Column } from '@schema/ui-kit';
 import { Search, ChevronDown, Loader2, AlertTriangle, List } from 'lucide-react';
@@ -31,7 +31,7 @@ import { NewTaskModal, BatchTaskModal, EditTaskModal } from './components';
 import type { NewTaskFormData, EditTaskFormData } from './components';
 import type { AnalysisTask } from '@/types/task';
 import { tasksApi } from '@/lib/tasks';
-import { useApi, usePolling } from '@/hooks';
+import { usePolling } from '@/hooks';
 import { EmptyState, IdCell, TaskStatusTag } from '@/components/shared';
 import { TaskCostValue } from '@/components/billing';
 import { getRecentTaskBilling, notifyBillingUpdated, type TaskBillingSummary } from '@/lib/billing';
@@ -193,7 +193,7 @@ export default function AnalysisPage() {
 
   // Create fetcher function with current statusFilter
   const fetcher = React.useCallback(async () => {
-    const params: Record<string, string> = { page: '1', page_size: '100' };
+    const params: NonNullable<Parameters<typeof tasksApi.list>[0]> = { page: 1, page_size: 100 };
     if (statusFilter !== 'all' && !['preparing_results', 'import_failed', 'interpretation_completed'].includes(statusFilter)) params.status = statusFilter;
     const data = await tasksApi.list(params);
     if (statusFilter === 'all') {
@@ -212,6 +212,7 @@ export default function AnalysisPage() {
   );
 
   const tasks=useLiveRetention(fetchedTasks);
+  const hasLoaded = fetchedTasks !== null;
   React.useEffect(()=>{setEditingTask(current=>{
     if(!current)return current;
     const latest=tasks.find(task=>task.id===current.id);
@@ -362,6 +363,13 @@ export default function AnalysisPage() {
     }
     return sortTasksByInterpretation(result);
   }, [searchQuery, statusFilter, tasks, t]);
+
+  const { visibleRecords: visibleTasks, pagination } = useRecordPagination(filteredTasks);
+
+  function changeStatusFilter(value: string) {
+    setStatusFilter(value);
+    pagination.onPageChange(1);
+  }
 
   const columns: Column<AnalysisTask>[] = [
     ...(isSaaS ? [{id:'expiresAt',header:t('research.expiresAt'),accessor:(row:AnalysisTask)=><ExpiryCell value={row.expiresAt} />,width:170}] : []),
@@ -518,14 +526,14 @@ export default function AnalysisPage() {
               </div>
             )}
 
-            {error && tasks !== null && (
+            {error && hasLoaded && (
               <div className="mb-4 flex items-center gap-2 rounded-md border border-warning-muted bg-warning-subtle px-4 py-3 text-sm text-warning-fg">
                 <AlertTriangle className="h-4 w-4 shrink-0" />
                 {t("tasks.backgroundRefreshFailedShowingPreviouslyLoadedData78931b")}{error}
               </div>
             )}
 
-            {loading && tasks === null && (
+            {loading && !hasLoaded && (
               <div className="yj-empty-state">
                 <div>
                   <span className="yj-empty-state-icon">
@@ -536,7 +544,7 @@ export default function AnalysisPage() {
               </div>
             )}
 
-            {error && tasks === null && !loading && (
+            {error && !hasLoaded && !loading && (
               <div className="yj-empty-state">
                 <div>
                   <span className="yj-empty-state-icon">
@@ -549,8 +557,8 @@ export default function AnalysisPage() {
               </div>
             )}
 
-            {tasks !== null && <HoverHint content={t("tasks.summaryOfUpToRecentTasksUsee0ade1")}><div className="yj-task-metrics" aria-label={t("tasks.recentTaskStatusOverview65fe08")} >
-                  {([{ label: t("admin.recentTasksabc5c3"), value: 'all' }, { label: t("admin.running594249"), value: 'running' }, { label: t("tasks.awaitingInterpretation0b7bdd"), value: 'pending_interpretation' }, { label: t("admin.completede99b48"), value: 'completed' }, { label: t("admin.failed3e3c80"), value: 'failed' }] as const).map(item => <button type="button" key={item.label} aria-pressed={statusFilter === item.value} onClick={() => setStatusFilter(item.value)}>
+            {hasLoaded && <HoverHint content={t("tasks.summaryOfUpToRecentTasksUsee0ade1")}><div className="yj-task-metrics" aria-label={t("tasks.recentTaskStatusOverview65fe08")} >
+                  {([{ label: t("admin.recentTasksabc5c3"), value: 'all' }, { label: t("admin.running594249"), value: 'running' }, { label: t("tasks.awaitingInterpretation0b7bdd"), value: 'pending_interpretation' }, { label: t("admin.completede99b48"), value: 'completed' }, { label: t("admin.failed3e3c80"), value: 'failed' }] as const).map(item => <button type="button" key={item.label} aria-pressed={statusFilter === item.value} onClick={() => changeStatusFilter(item.value)}>
                     <strong>{(recentCounts[item.value] ?? 0).toLocaleString(t.locale)}</strong>{translateUI(item.label, t)}
                   </button>)}
                 </div></HoverHint>}
@@ -561,18 +569,21 @@ export default function AnalysisPage() {
                       <Input
                         placeholder={t("tasks.searchTaskOrSampleId9c4f1c")}
                         value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onChange={(e) => {
+                          setSearchQuery(e.target.value);
+                          pagination.onPageChange(1);
+                        }}
                         leftElement={<Search className="w-4 h-4" />}
                       />
                     </div>
                     <div className="w-36">
                       <StatusFilterDropdown
                         value={statusFilter}
-                        onChange={(value) => setStatusFilter(value)}
+                        onChange={changeStatusFilter}
                       />
                     </div>
                   </div>
-                  {tasks !== null && <span className="text-xs text-fg-muted">{t("tasks.showing5d908b")}{filteredTasks.length.toLocaleString(t.locale)} {t("tasks.tasks0fdf86")}</span>}
+                  {hasLoaded && <span className="text-xs text-fg-muted">{t("tasks.showing5d908b")}{filteredTasks.length.toLocaleString(t.locale)} {t("tasks.tasks0fdf86")}</span>}
                   <div role="group" aria-label={t('tasks.taskActions')} className="ml-auto flex flex-wrap items-center gap-2">
                     <Button permission={null} action="download" onClick={downloadTaskBatchTemplate}>{t('samples.downloadTemplatea3afb2')}</Button>
                     <Button permission="tasks.manage" action="upload" onClick={()=>setIsBatchTaskModalOpen(true)}>{t('tasks.uploadTaskInformation')}</Button>
@@ -580,14 +591,14 @@ export default function AnalysisPage() {
                   </div>
                 </div>
 
-                {tasks !== null && (filteredTasks.length > 0 ? (
-                  <MobileRecordList data={filteredTasks} columns={localizeDisplay(columns, t)}
+                {hasLoaded && (visibleTasks.length > 0 ? (
+                  <MobileRecordList data={visibleTasks} columns={localizeDisplay(columns, t)}
                     title={row => <>{row.internalId || row.sampleId || row.id}<ExampleBadge origin={row.origin} /></>}
                     primaryLabel={t("history.sampleId6d686e")} statusColumn="status"
                     secondaryColumns={['pipeline', 'progress']} detailColumns={['taskId', 'sample', 'expiresAt', 'createdAt', 'cost', 'remark']}
                     desktop={
                       <DataTable
-                        data={filteredTasks}
+                        data={visibleTasks}
                         columns={localizeDisplay(columns, t)}
                         rowKey="id"
                         density="compact"
@@ -602,6 +613,7 @@ export default function AnalysisPage() {
                     description={t("tasks.adjustFiltersOrCreateANewAnalysis5cca37")}
                   />
                 ))}
+                <RecordPagination {...pagination} />
                 </div>
           </div>
         </div>

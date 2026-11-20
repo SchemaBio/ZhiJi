@@ -157,6 +157,7 @@ export interface TaskProgressResponse {
   dispatch_next_retry_at?: string;
   dispatch_retry_deadline_at?: string;
   dispatch_retry_count?: number;
+  sepiida_query_unavailable?: boolean;
   sepiida?: SepiidaWorkflow;
   tasks?: SepiidaTask[];
   analysis_progress?: AnalysisProgress;

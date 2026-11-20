@@ -1,8 +1,47 @@
 export const HISTORY_TYPES = [
-  ['snv-indel', 'SNP/InDel'], ['cnv-segment', 'CNV Region'], ['cnv-exon', 'CNV Exon'],
-  ['str', '动态突变'], ['mei', 'MEI'], ['mt', 'MT'], ['roh', 'ROH'], ['upd', 'UPD'],
+  ['snv-indel', 'SNV/InDel'],
+  ['cnv-gene', 'oncologyResults.cnvGene'],
+  ['fusion', 'oncologyResults.fusion'],
+  ['hotspot', 'oncologyResults.hotspot'],
+  ['cnv-chrom', 'oncologyResults.cnvChrom'],
+  ['germline', 'oncologyResults.germline'],
 ] as const;
-export type HistoryType = typeof HISTORY_TYPES[number][0];
+const LEGACY_HISTORY_TYPES = ['cnv-segment', 'cnv-exon', 'str', 'mei', 'mt', 'roh', 'upd'] as const;
+export type HistoryType = typeof HISTORY_TYPES[number][0] | typeof LEGACY_HISTORY_TYPES[number];
+export type HistoryColumn = readonly [key: string, label: string, width: number];
+
+const variantColumns: HistoryColumn[] = [
+  ['chrom', 'CHROM', 72], ['pos', 'POS', 108], ['ref', 'REF', 64], ['alt', 'ALT', 64], ['gene', '基因', 96],
+];
+const auditColumns: HistoryColumn[] = [
+  ['reference', '参考版本', 90], ['classification', '当前分类', 112], ['detectionCount', '涉及任务数', 84],
+  ['firstFocusedAt', '首次关注', 140], ['lastFocusedAt', '最近关注', 140],
+];
+const moduleColumns: Partial<Record<HistoryType, HistoryColumn[]>> = {
+  'cnv-gene': [
+    ['gene', '基因', 96], ['interval', 'oncologyResults.interval', 154], ['event', 'oncologyResults.event', 98],
+    ['copies', 'oncologyResults.copies', 104], ['loh', 'oncologyResults.loh', 142],
+  ],
+  fusion: [
+    ['gene5', 'oncologyResults.gene5', 90], ['gene3', 'oncologyResults.gene3', 90],
+    ['exon5', 'oncologyResults.exon5', 104], ['exon3', 'oncologyResults.exon3', 104],
+    ['breakpoint5', 'oncologyResults.breakpoint5', 132], ['breakpoint3', 'oncologyResults.breakpoint3', 132],
+    ['frame', 'oncologyResults.frame', 80],
+  ],
+  hotspot: [...variantColumns, ['locus', 'oncologyResults.locus', 132], ['status', 'oncologyResults.status', 98]],
+  'cnv-chrom': [
+    ['chromosome', 'oncologyResults.chromosome', 100], ['interval', 'oncologyResults.interval', 164],
+    ['event', 'oncologyResults.event', 98], ['fraction', 'oncologyResults.fraction', 148],
+    ['copies', 'oncologyResults.copies', 104], ['loh', 'oncologyResults.loh', 142],
+  ],
+  germline: [...variantColumns, ['normalVaf', 'oncologyResults.normalVaf', 110], ['genotype', 'oncologyResults.genotype', 94], ['af', '人群 AF', 84]],
+};
+export function historyColumns(table: HistoryType): HistoryColumn[] {
+  const specific = moduleColumns[table];
+  if (specific) return [...specific, ...auditColumns];
+  return [...variantColumns.slice(0, 4), auditColumns[0], variantColumns[4], ...auditColumns.slice(1), ['af', '人群 AF', 84]];
+}
+
 export interface FocusRow {
   id: string; revision: number; deleted?: boolean; table: HistoryType; taskUuid: string;
   attemptId: string; datasetId?: string; datasetVersion?: string; rowId?: string;
@@ -14,7 +53,7 @@ export interface FocusRow {
   currentSource?: boolean;
 }
 export interface HistoryTask {
-  uuid: string; name: string; sampleId: string; internalId: string; currentAttempt: string; pipeline: string;
+  uuid: string; name: string; sampleId: string; internalId: string; currentAttempt: string; pipeline: string; template?: string;
 }
 export interface HistoryGroup {
   id: string; reference: string; identityKnown: boolean; locus: string; gene: string;
@@ -34,6 +73,10 @@ export const CLASS_LABELS: Record<string, string> = {
   Likely_Benign: '可能良性', Benign: '良性', mixed: '分类不一致', '': '未提供',
 };
 export function locus(fields: Record<string, string>): string {
+  if (fields.interval) return fields.interval;
+  if (fields.breakpoint5 || fields.breakpoint3) return [fields.breakpoint5, fields.breakpoint3].filter(Boolean).join(' → ');
+  if (fields.position?.includes(':')) return fields.position;
+  if (!fields.position && !fields.startPosition && fields.locus) return fields.locus;
   const chrom = fields.chromosome || '染色体未提供';
   if (fields.position) return `${chrom}:${fields.position}${fields.ref && fields.alt ? ` ${fields.ref}>${fields.alt}` : ''}`;
   return fields.startPosition && fields.endPosition ? `${chrom}:${fields.startPosition}-${fields.endPosition}` : chrom;
@@ -43,12 +86,18 @@ export function historyPosition(fields: Record<string, string>): string {
   return fields.position || (fields.startPosition && fields.endPosition ? `${fields.startPosition}-${fields.endPosition}` : '');
 }
 
-function columnValue(group: HistoryGroup, key: string): string | number {
+const numericFields = new Set(['detectionCount', 'af', 'copies', 'fraction', 'normalVaf']);
+export const isNumericHistoryColumn = (key: string) => numericFields.has(key);
+
+export function historyColumnValue(group: HistoryGroup, key: string): string | number {
   if (key === 'chrom') return group.fields.chromosome || '';
   if (key === 'pos') return historyPosition(group.fields);
   if (key === 'ref' || key === 'alt') return group.fields[key] || '';
   if (key === 'af') return group.fields.gnomadAF || '';
-  const value = group[key as keyof HistoryGroup];
+  if (key === 'interval') return group.fields.interval || group.fields.position || group.locus;
+  if (key === 'locus') return group.fields.locus || group.locus;
+  if (key === 'copies') return group.fields.copies || group.fields.copyNumber || '';
+  const value = Object.hasOwn(group, key) ? group[key as keyof HistoryGroup] : group.fields[key];
   return typeof value === 'number' ? value : String(value ?? '');
 }
 
@@ -101,7 +150,7 @@ export class HistoryEngine {
     const sources = new Map<string, FocusRow[]>();
     const activeGroups = new Set<string>(), activeTasks = new Set<string>();
     for (const row of this.rows.values()) {
-      if (row.table !== table) continue;
+      if (row.table !== table || (table === 'germline' && this.tasks.get(row.taskUuid)?.template === 'tumor_single')) continue;
       if (row.focused) { activeGroups.add(row.groupKey); activeTasks.add(row.taskUuid); }
       if (!includeWithdrawn && !row.focused) continue;
       const members = sources.get(row.groupKey) || []; members.push(row); sources.set(row.groupKey, members);
@@ -138,15 +187,23 @@ export class HistoryEngine {
       })].join(' ').toLowerCase().includes(search)) return false;
       return Object.entries(query.filters).every(([key, filter]) => {
         if (!filter.trim()) return true;
-        if (key === 'classification') return filter === '__missing' ? '' in group.classificationCounts || !Object.keys(group.classificationCounts).length : filter === 'mixed' ? group.classification === 'mixed' : filter in group.classificationCounts;
-        const value = String(columnValue(group, key));
+        if (key === 'classification') {
+          const options = Object.keys(group.classificationCounts);
+          if (filter === '__missing' || filter === '未提供') return options.length === 0 || options.includes('');
+          if (filter === '__present' || filter === '已提供') return options.some(Boolean);
+          if (filter === 'mixed') return group.classification === 'mixed';
+          if (['snv-indel', 'hotspot', 'germline'].includes(query.table)) return options.includes(filter);
+          const term = filter.toLowerCase().trim();
+          return options.some(name => name.toLowerCase().includes(term));
+        }
+        const value = String(historyColumnValue(group, key));
         if (filter === '__missing' || filter === '未提供') return !value;
         if (filter === '__present' || filter === '已提供') return Boolean(value);
-        if (key === 'detectionCount' || key === 'af') {
+        if (isNumericHistoryColumn(key)) {
           const match = filter.match(/^\s*(>=|<=|>|<|=)?\s*([\d.eE+-]+)\s*$/);
           if (!match) return false;
           const n = Number(match[2]); if (!Number.isFinite(n)) return false;
-          const values = key === 'af' ? afNumbers(group.fields.gnomadAF) : [group.detectionCount];
+          const values = key === 'af' ? afNumbers(group.fields.gnomadAF) : value.trim() && Number.isFinite(Number(value)) ? [Number(value)] : [];
           return values.some(value => match[1] === '>=' ? value >= n : match[1] === '<=' ? value <= n : match[1] === '>' ? value > n : match[1] === '<' ? value < n : value === n);
         }
         return value.toLowerCase().includes(filter.toLowerCase());
@@ -156,10 +213,10 @@ export class HistoryEngine {
     const collator = new Intl.Collator('zh-CN', { numeric: true });
     filtered.sort((a, b) => {
       const afA = query.sort === 'af' ? afNumbers(a.fields.gnomadAF) : [], afB = query.sort === 'af' ? afNumbers(b.fields.gnomadAF) : [];
-      const av = query.sort === 'af' ? (afA.length ? Math.min(...afA) : undefined) : columnValue(a, query.sort), bv = query.sort === 'af' ? (afB.length ? Math.min(...afB) : undefined) : columnValue(b, query.sort);
+      const av = query.sort === 'af' ? (afA.length ? Math.min(...afA) : undefined) : historyColumnValue(a, query.sort), bv = query.sort === 'af' ? (afB.length ? Math.min(...afB) : undefined) : historyColumnValue(b, query.sort);
       if (!av && av !== 0) return !bv && bv !== 0 ? a.id.localeCompare(b.id) : 1;
       if (!bv && bv !== 0) return -1;
-      const primary = query.sort === 'af' && Number.isFinite(Number(av)) && Number.isFinite(Number(bv)) ? Number(av) - Number(bv) : typeof av === 'number' && typeof bv === 'number' ? av - bv : collator.compare(String(av), String(bv));
+      const primary = isNumericHistoryColumn(query.sort) && Number.isFinite(Number(av)) && Number.isFinite(Number(bv)) ? Number(av) - Number(bv) : typeof av === 'number' && typeof bv === 'number' ? av - bv : collator.compare(String(av), String(bv));
       return primary * sign || b.lastFocusedAt.localeCompare(a.lastFocusedAt) || a.id.localeCompare(b.id);
     });
     const page = Math.max(1, Math.min(query.page, Math.ceil(filtered.length / query.pageSize) || 1));

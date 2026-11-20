@@ -1,4 +1,6 @@
 'use client';
+import { formatLocalDateTime } from '@/lib/utils';
+import { historySourceTarget, isHistoryIndexUnavailable } from './history-support';
 import { errorText } from '@/i18n/errors';
 
 import { useText } from '@/i18n/useText';
@@ -18,13 +20,11 @@ import { useAuth } from '@/components/providers/AuthProvider';
 import { ApiError } from '@/lib/api';
 import { HistoryWorkerClient, focusDetail, syncFocuses, type HistoryAudit } from './history-client';
 import { downloadHistoryWorkbook } from './history-export';
-import { CLASS_LABELS, HISTORY_TYPES, locus, historyPosition, type HistoryQuery, type HistoryQueryResult, type HistoryTask, type HistoryType, type FocusRow } from './history-engine';
+import { CLASS_LABELS, HISTORY_TYPES, locus, historyColumns, historyColumnValue, isNumericHistoryColumn, type HistoryQuery, type HistoryQueryResult, type HistoryTask, type HistoryType, type FocusRow } from './history-engine';
 
 const initialQuery: Omit<HistoryQuery, 'table'> = { search: '', includeWithdrawn: false, filters: {}, sort: 'detectionCount', direction: 'desc', page: 1, pageSize: 25 };
-const columns = [['chrom', 'CHROM', 72], ['pos', 'POS', 108], ['ref', 'REF', 64], ['alt', 'ALT', 64], ['reference', '参考版本', 90], ['gene', '基因', 96], ['classification', '当前分类', 112], ['detectionCount', '涉及任务数', 84], ['firstFocusedAt', '首次关注', 126], ['lastFocusedAt', '最近关注', 126], ['af', '人群 AF', 84]] as const;
 const sourceColumnWidth = 88;
-const minimumTableWidth = columns.reduce((width, column) => width + column[2], sourceColumnWidth);
-const formatTime = (value?: string | null, t: TextTranslator = chineseText) => value ? new Date(value).toLocaleString(t.locale, { hour12: false }) : t('history.notProvided071fb2');
+const formatTime = (value?: string | null, t: TextTranslator = chineseText) => value ? formatLocalDateTime(value) : t('history.notProvided071fb2');
 const classificationLabel = (value: string) => CLASS_LABELS[value] || value || '未提供';
 function ClassBadge({ value }: { value: string }) {
   const t = useText();
@@ -38,6 +38,8 @@ export default function HistoryWorkspace() {
   const { user, currentOrg, isAuthenticated } = useAuth();
   const scope = isAuthenticated && user ? `${user.id}:${currentOrg?.id || 'personal'}` : '';
   const [table, setTable] = React.useState<HistoryType>('snv-indel');
+  const columns = historyColumns(table);
+  const minimumTableWidth = columns.reduce((width, column) => width + column[2], sourceColumnWidth);
   const [query, setQuery] = React.useState(initialQuery);
   const [search, setSearch] = React.useState('');
   const [client, setClient] = React.useState<HistoryWorkerClient | null>(null);
@@ -46,6 +48,8 @@ export default function HistoryWorkspace() {
   const [received, setReceived] = React.useState(0), [error, setError] = React.useState('');
   const [version, setVersion] = React.useState(0), [refresh, setRefresh] = React.useState(0);
   const [result, setResult] = React.useState<HistoryQueryResult | null>(null);
+  const [unavailableIdentity, setUnavailableIdentity] = React.useState('');
+  const indexUnavailable = unavailableIdentity === scope + ':' + table;
   const [readyIdentity, setReadyIdentity] = React.useState('');
   const visibleReady = ready && readyIdentity === `${scope}:${table}`;
   const [selected, setSelected] = React.useState<string | null>(null), [sources, setSources] = React.useState<Source[]>([]);
@@ -91,7 +95,7 @@ export default function HistoryWorkspace() {
   React.useEffect(() => {
     if (!client || !scope) return;
     const controller = new AbortController(); let busy = false;
-    setReady(false); setResult(null); setSelected(null); setError(''); setReceived(0);
+    setReady(false); setResult(null); setSelected(null); setError(''); setReceived(0); setUnavailableIdentity('');
     const synchronize = async () => {
       if (busy || controller.signal.aborted) return;
       busy = true; setSyncing(true);
@@ -118,7 +122,12 @@ export default function HistoryWorkspace() {
           if (++catchups > 10) throw new Error(t("history.focusSelectionsAreStillUpdatingRefreshLater4a0678"));
         }
         if (!controller.signal.aborted) { await client.call({ action: 'commit', table }); if (!controller.signal.aborted) { cursors.current.set(table, cursor); setReadyIdentity(`${scope}:${table}`); setReady(true); setError(''); if (count || !hadSnapshot) setVersion(value => value + 1); } }
-      } catch (failure) { if (!controller.signal.aborted) setError(failure instanceof Error ? errorText(failure, t) : t("history.historySynchronizationFailedRetryc3eb83")); }
+      } catch (failure) {
+        if (!controller.signal.aborted) {
+          if (isHistoryIndexUnavailable(table, failure)) setUnavailableIdentity(scope + ':' + table);
+          else setError(failure instanceof Error ? errorText(failure, t) : t("history.historySynchronizationFailedRetryc3eb83"));
+        }
+      }
       finally { if (!controller.signal.aborted) { await client.call({ action: 'discard', table }).catch(() => undefined); setSyncing(false); } busy = false; }
     };
     void synchronize();
@@ -164,14 +173,14 @@ export default function HistoryWorkspace() {
   }, [selected, visibleReady]);
   const filter = (key: string, value: string) => setQuery(previous => ({ ...previous, page: 1, filters: { ...previous.filters, [key]: value } }));
   const sort = (key: string) => setQuery(previous => ({ ...previous, page: 1, sort: key, direction: previous.sort === key && previous.direction === 'desc' ? 'asc' : 'desc' }));
-  const chooseType = (next: HistoryType) => { setReady(false); setResult(null); setTable(next); setQuery(initialQuery); setSearch(''); setSelected(null); };
+  const chooseType = (next: HistoryType) => { if (next === table) return; setReady(false); setResult(null); setTable(next); setQuery(initialQuery); setSearch(''); setSelected(null); };
   const openSource = async (row: FocusRow) => {
     const checkedScope = scope;
     try {
       const detail = await focusDetail(row.id, new AbortController().signal);
       if (checkedScope !== activeScope.current) return;
       if (!detail.row.currentSource) { setSourceError(t("history.theExecutionOrDataVersionHasChanged87e38a")); return; }
-      router.push(`/tasks/${encodeURIComponent(row.taskUuid)}`);
+      router.push(historySourceTarget(detail.row));
     } catch { if (checkedScope === activeScope.current) setSourceError(t("history.unableToOpenSourceRefreshAndRetry7a5287")); }
   };
   const activeScope = React.useRef(scope); activeScope.current = scope;
@@ -179,7 +188,7 @@ export default function HistoryWorkspace() {
     const Icon = query.sort === key ? query.direction === 'desc' ? ArrowDown : ArrowUp : ArrowUpDown;
     return <button type="button" aria-label={t("history.sortBy76febe", {p0: String(t(label))})} onClick={() => sort(key)} className="yj-history-sort" data-active={query.sort === key}>{t(label)}<Icon aria-hidden="true" /></button>;
   };
-  const filterControl = (key: string, label: string) => <HistoryColumnFilter label={translateUI(label, t)} value={query.filters[key] || ''} numeric={key === 'detectionCount' || key === 'af'} onChange={value => filter(key, value)} />;
+  const filterControl = (key: string, label: string) => <HistoryColumnFilter label={translateUI(label, t)} value={query.filters[key] || ''} numeric={isNumericHistoryColumn(key)} onChange={value => filter(key, value)} />;
 
 
   return <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden p-4 md:p-6 yj-history-page" data-testid="history-workspace">
@@ -195,7 +204,7 @@ export default function HistoryWorkspace() {
       </div>
     </header>
     {exportError && <p role="alert" className="pb-2 text-sm text-danger-fg">{exportError}</p>}
-    {(syncing || !visibleReady) && <p className="yj-history-sync" role="status">{syncing ? t("history.synchronizingRecordsReceivede70010", {p0: String(received.toLocaleString(t.locale))}) : t("history.awaitingSynchronization250249")}</p>}
+    {(syncing || (!visibleReady && !indexUnavailable && !error)) && <p className="yj-history-sync" role="status">{syncing ? t("history.synchronizingRecordsReceivede70010", {p0: String(received.toLocaleString(t.locale))}) : t("history.awaitingSynchronization250249")}</p>}
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border-default bg-[var(--yj-panel-bg)]">
       <nav aria-label={t("history.variantType6c1aef")} className="yj-history-type-tabs">{HISTORY_TYPES.map(([key, label]) => <button type="button" key={key} aria-current={table === key ? 'page' : undefined} onClick={() => chooseType(key)}>{t(label)}</button>)}</nav>
       <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -207,22 +216,23 @@ export default function HistoryWorkspace() {
             <thead className="yj-history-table-head sticky top-0 z-10">
               <tr>{columns.map(([key, label]) => <th key={key} className="pt-3 pb-2 font-medium" aria-sort={query.sort === key ? query.direction === 'asc' ? 'ascending' : 'descending' : 'none'}>{sortControl(key, label)}</th>)}<th>{t("history.sourcec63f79")}</th></tr>
               <tr>{columns.map(([key, label]) => <th key={key} className="px-4 pb-3 font-normal">
-                {key === 'classification' ? <HistoryClassificationFilter value={query.filters[key] || ''} onChange={value => filter(key, value)} />
+                {key === 'classification' && ['snv-indel', 'hotspot', 'germline'].includes(table) ? <HistoryClassificationFilter value={query.filters[key] || ''} onChange={value => filter(key, value)} />
                   : filterControl(key, label)}
               </th>)}<th /></tr>
             </thead>
-            <tbody>{!visibleReady || !result ? <tr><td colSpan={12} className="p-12 text-fg-muted">{error ? t("history.synchronizationIncompleteClickToRetrye0391e") : t("history.synchronizingFocusIndexCompleteStatisticsWillAppearc6d9db")}</td></tr> : result.groups.length === 0 ? <tr><td colSpan={12} className="p-12 text-fg-muted">{result.totalVariants ? t("history.noMatchingHistory62cbfb") : t("history.noLociSelectedForFocusese43c3c")}</td></tr> : result.groups.map(group => <tr key={group.id} className={selected === group.id ? 'bg-accent-subtle' : 'hover:bg-canvas-subtle'}>
-              <td className="font-mono text-xs">{group.fields.chromosome || t("history.notProvided071fb2")}</td>
-              <td className="font-mono text-xs [overflow-wrap:anywhere]">{historyPosition(group.fields) || t("history.notProvided071fb2")}{!group.identityKnown && <span className="mt-1 block text-xs text-warning-fg">{t("history.incompleteIdentityIndependentRecordb2810b")}</span>}</td>
-              <td className="font-mono text-xs break-all">{group.fields.ref || t("history.notProvided071fb2")}</td>
-              <td className="font-mono text-xs break-all">{group.fields.alt || t("history.notProvided071fb2")}</td>
-              <td className="whitespace-nowrap">{group.reference || t("history.notProvided071fb2")}</td>
-              <td className="break-words font-medium">{group.gene || t("history.notProvided071fb2")}</td>
-              <td><ClassBadge value={group.classification} />{group.classification === 'mixed' && <div className="mt-2 break-words text-xs leading-5 text-fg-muted">{Object.entries(group.classificationCounts).map(([value, count]) => `${t(classificationLabel(value))} ${count}`).join(' · ')}</div>}</td>
-              <td className="font-semibold tabular-nums">{group.detectionCount}</td>
-              <td className="break-words text-xs tabular-nums">{formatTime(group.firstFocusedAt, t)}</td>
-              <td className="break-words text-xs tabular-nums">{formatTime(group.lastFocusedAt, t)}</td>
-              <td className="break-all font-mono text-xs">{group.fields.gnomadAF || t("history.notProvided071fb2")}</td>
+            <tbody>{!visibleReady || !result ? <tr><td colSpan={columns.length + 1} className="p-12 text-fg-muted">{indexUnavailable ? t("history.oncologyIndexUnavailable") : error ? t("history.synchronizationIncompleteClickToRetrye0391e") : t("history.synchronizingFocusIndexCompleteStatisticsWillAppearc6d9db")}</td></tr> : result.groups.length === 0 ? <tr><td colSpan={columns.length + 1} className="p-12 text-fg-muted">{result.totalVariants ? t("history.noMatchingHistory62cbfb") : t("history.noLociSelectedForFocusese43c3c")}</td></tr> : result.groups.map(group => <tr key={group.id} className={selected === group.id ? 'bg-accent-subtle' : 'hover:bg-canvas-subtle'}>
+              {columns.map(([key], index) => {
+                const value = historyColumnValue(group, key);
+                if (key === 'classification') return <td key={key}><ClassBadge value={group.classification} />
+                  {group.classification === 'mixed' && <div className="mt-2 break-words text-xs leading-5 text-fg-muted">
+                    {Object.entries(group.classificationCounts).map(([name, count]) => t(classificationLabel(name)) + ' ' + count).join(' · ')}
+                  </div>}</td>;
+                const isTime = key === 'firstFocusedAt' || key === 'lastFocusedAt';
+                return <td key={key} className="break-words text-xs tabular-nums [overflow-wrap:anywhere]">
+                  {isTime ? formatTime(String(value), t) : value === '' ? t("history.notProvided071fb2") : typeof value === 'string' ? t(value) : value}
+                  {index === 0 && !group.identityKnown && <span className="mt-1 block text-xs text-warning-fg">{t("history.incompleteIdentityIndependentRecordb2810b")}</span>}
+                </td>;
+              })}
               <td><ActionButton action="view" size="small" variant="ghost" onClick={() => setSelected(group.id)} aria-label={t("history.viewSources19d4ba", {p0: String(group.sourceCount)})} className="!max-w-full !whitespace-normal !px-2 text-xs">{group.sourceCount} {t("history.recordseb8c2d")}</ActionButton></td>
             </tr>)}</tbody>
           </table>
@@ -244,10 +254,17 @@ export default function HistoryWorkspace() {
             <div className="border-b border-border-default bg-canvas-subtle p-4">
               <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-[11px] text-fg-muted">{t("history.source7bcf14")}{index + 1} · {row.reference || t("history.referenceVersionNotProvidedfbecd7")}</p><h3 className="mt-1 break-words font-semibold">{task?.name || t("history.taskNameNotProvided42e981")}</h3></div><span className={`shrink-0 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs ${row.focused ? 'border-accent-muted bg-accent-subtle text-accent-fg' : 'border-border-default bg-canvas-subtle text-fg-muted'}`}>{row.focused ? t("history.activeFocusSelectiond9a72c") : t("history.withdrawnc05f5f")}</span></div>
               <p className="mt-3 select-text break-all font-mono text-xs leading-5">{locus(row.fields)}</p>
-              <p className="mt-1 break-words text-xs text-fg-muted">{row.fields.gene || t("history.geneNotProvided50c9a2")} · {row.fields.transcript || t("history.transcriptNotProvided52120f")}</p>
+              {(row.fields.gene || row.fields.gene5 || row.fields.gene3 || row.fields.transcript) && <p className="mt-1 break-words text-xs text-fg-muted">
+                {[row.fields.gene || [row.fields.gene5, row.fields.gene3].filter(Boolean).join(' → '), row.fields.transcript].filter(Boolean).join(' · ')}
+              </p>}
             </div>
             <div className="p-4">
               <div className="grid grid-cols-2 gap-3"><div className="rounded-lg border border-border-default p-3"><p className="mb-2 text-xs text-fg-muted">{t("history.currentEffectiveClassificationfbb295")}</p><ClassBadge value={row.classification} />{row.table==='snv-indel'&&<p className="mt-1 text-xs text-fg-muted">{row.acmgVersion==='svcv4'?t("history.svcVExperimentalNonauthoritativeReference9ccc60"):t("history.currentAcmgEditionb8a846")}{row.vusSubclass?` · ${row.vusSubclass}`:''}</p>}</div><div className="rounded-lg border border-border-default p-3"><p className="mb-2 text-xs text-fg-muted">{t("history.classificationAtFocusing62c832")}</p><ClassBadge value={row.focusedClassification} />{row.table==='snv-indel'&&<p className="mt-1 text-xs text-fg-muted">{row.focusedAcmgVersion==='svcv4'?t("history.svcVExperimentalNonauthoritativeReference9ccc60"):t("history.currentAcmgEditionb8a846")}{row.focusedVusSubclass?` · ${row.focusedVusSubclass}`:''}</p>}</div></div>
+              {row.table !== 'snv-indel' && <dl className="mt-3 grid grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)] gap-x-3 gap-y-1 text-xs">
+                {historyColumns(row.table).filter(([key]) => row.fields[key]).map(([key, label]) => <React.Fragment key={key}>
+                  <dt className="text-fg-muted">{t(label)}</dt><dd className="break-words">{t(row.fields[key])}</dd>
+                </React.Fragment>)}
+              </dl>}
               <h4 className="mt-5 text-xs font-semibold">{t("history.sourceIdentity45ad45")}</h4><dl className="mt-2 grid grid-cols-[84px_minmax(0,1fr)] gap-x-3 gap-y-2.5 text-xs leading-5">
                 <dt className="text-fg-muted">{t("history.sample610da8")}</dt><dd className="min-w-0 select-text break-words">{task?.internalId || task?.sampleId || t("history.notProvided071fb2")}</dd>
                 <dt className="text-fg-muted">{t("history.memberRole2c55d6")}</dt><dd className="min-w-0 break-words">{row.fields.member || row.fields.memberId || row.fields.role || row.fields.memberRole || t("history.notProvided071fb2")}</dd>

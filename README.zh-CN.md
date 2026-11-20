@@ -2,7 +2,7 @@
 
 [English](./README.md) | **中文**
 
-知几肿瘤分析初始基线的开源 Web 前端。当前仍运行继承的胚系分析工作流，覆盖从 FASTQ 到质控、变异注释和结果浏览的路径。这些界面中的疾病与遗传表述保持原样。对接自部署的 [Loligo](https://github.com/SchemaBio/Loligo) API。
+知几肿瘤分析平台的开源 Web 前端。连接自部署的 [Loligo](https://github.com/SchemaBio/Loligo) API 后，可管理样本、查看任务进度和浏览分析结果。
 
 采用 [Apache License 2.0](./LICENSE)。
 

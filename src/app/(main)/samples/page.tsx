@@ -1,6 +1,7 @@
 'use client';
 import { formatDateTime } from '@/lib/date-time';
 import { MobileRecordList } from '@/components/shared/MobileRecordList';
+import { RecordPagination, useRecordPagination } from '@/components/shared/RecordPagination';
 import { ExampleBadge } from '@/components/shared/ExampleData';
 import { downloadImportWorkbook } from '@/lib/import-workbook';
 import { ImportSamplesModal } from './components/ImportSamplesModal';
@@ -201,6 +202,8 @@ export default function SamplesPage() {
         || sample.collectionSite?.toLowerCase().includes(query)
     );
   }, [searchQuery, samples, t]);
+  const { visibleRecords: visibleSamples, pagination } = useRecordPagination(filteredSamples);
+  const visibleSelection = new Set(visibleSamples.map(sample => sample.id).filter(id => selectedRows.has(id)));
 
   const handleCreateSample = async (data: NewSampleFormData) => {
     try {
@@ -262,7 +265,14 @@ export default function SamplesPage() {
   };
 
   const handleSelectionChange = (nextSelection: Set<string>) => {
-    setSelectedRows(new Set(nextSelection));
+    setSelectedRows(previous => {
+      const next = new Set(previous);
+      for (const { id } of visibleSamples) {
+        if (nextSelection.has(id)) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
   };
 
   const columns: Column<Sample>[] = [
@@ -441,7 +451,10 @@ export default function SamplesPage() {
                 id="samples-search"
                 placeholder={t("oncologySample.search")}
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  pagination.onPageChange(1);
+                }}
                 leftElement={<Search className="h-4 w-4" />}
               />
             </div>
@@ -492,19 +505,19 @@ export default function SamplesPage() {
               {readFailed && <Button permission={null} action="retry" variant="secondary" size="small" disabled={loading} onClick={() => void loadSamples()}>{t("billing.retryLoading7b4939")}</Button>}
             </div>
           )}
-          {!hasLoaded && loading ? <div className="yj-empty-state text-sm text-fg-muted">{t("samples.loadingSamples20c029")}</div> : readFailed && samples.length === 0 ? null : filteredSamples.length > 0 ? (
-            <MobileRecordList data={filteredSamples} columns={columns}
+          {!hasLoaded && loading ? <div className="yj-empty-state text-sm text-fg-muted">{t("samples.loadingSamples20c029")}</div> : readFailed && samples.length === 0 ? null : visibleSamples.length > 0 ? (
+            <MobileRecordList data={visibleSamples} columns={columns}
               title={row => <>{row.internalId || row.id}<ExampleBadge origin={row.origin} /></>}
               primaryLabel={t("history.sampleId6d686e")} statusColumn="matchedPair"
               secondaryColumns={['sampleType', 'cancerType']} detailColumns={['uuid', 'collectionSite', 'batch', 'expiresAt', 'createdAt', 'remark']}
               desktop={
                 <DataTable
-                  data={filteredSamples}
+                  data={visibleSamples}
                   columns={columns}
                   rowKey="id"
                   selectable
                   selectionMode="multiple"
-                  selectedRows={selectedRows}
+                  selectedRows={visibleSelection}
                   onSelectionChange={handleSelectionChange}
                   onRowDoubleClick={(row) => setEditingSample(row)}
                   stickyHeader
@@ -523,6 +536,7 @@ export default function SamplesPage() {
             </div>
           )}
         </div>
+        <RecordPagination {...pagination} />
       </div>
 
       {importOpen && getRuntimeBackendFlavor() !== 'onykia' && <ImportSamplesModal onClose={()=>setImportOpen(false)} onImported={()=>void loadSamples()} />}

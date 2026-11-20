@@ -35,6 +35,18 @@ describe('TaskRuntimeTab', () => {
     getLogs.mockResolvedValue('');
   });
 
+  it('clears the Sepiida warning when queries recover without changing task status', async () => {
+    getProgress
+      .mockResolvedValueOnce(progressResponse({ sepiida_query_unavailable: true }))
+      .mockResolvedValueOnce(progressResponse());
+
+    render(<TaskRuntimeTab taskId="task-1" initialStatus="running" />);
+
+    const warning = await screen.findByText(/暂时无法查询工作流状态/);
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }));
+    await waitFor(() => expect(warning).not.toBeInTheDocument());
+  });
+
   it('shows analysis, node and Agent liveness as independent states and refreshes them', async () => {
     getProgress
       .mockResolvedValueOnce(progressResponse({

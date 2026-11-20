@@ -1,5 +1,6 @@
 'use client';
 import { MobileRecordList } from '@/components/shared/MobileRecordList';
+import { RecordPagination, useRecordPagination } from '@/components/shared/RecordPagination';
 import { ExampleBadge } from '@/components/shared/ExampleData';
 import { LocalDataImportModal } from './LocalDataImportModal';
 import { downloadImportWorkbook } from '@/lib/import-workbook';
@@ -95,9 +96,11 @@ export default function DataCenterPage() {
   };
   const { capacity, refreshCapacity, activeUpload, queuedCount = 0, retries = {}, retryFile, startUpload: runUpload, cancelFile, forgetFile, pruneFiles, markFileFailed, cancelUpload, clearUpload } = useUpload();
   const [assets, setAssets] = React.useState<DataAsset[]>([]);
+  const { visibleRecords: visibleAssets, pagination } = useRecordPagination(assets);
   const [config, setConfig] = React.useState<DataCenterConfig | null>(null);
   const [storageStats, setStorageStats] = React.useState<UploadStorageStats | null>(null);
   const [search, setSearch] = React.useState('');
+  const appliedSearch = React.useRef('');
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState('');
   const [loadFailed, setLoadFailed] = React.useState(false);
@@ -138,7 +141,7 @@ export default function DataCenterPage() {
     [activeUpload?.files],
   );
 
-  const load = React.useCallback(async (query = '', background = false) => {
+  const load = React.useCallback(async (background = false) => {
     const requestId = ++loadRequestRef.current;
     if (!background) {
       setLoading(true);
@@ -147,7 +150,7 @@ export default function DataCenterPage() {
     }
     try {
       const [assetResult, configResult, statsResult] = await Promise.all([
-        listDataAssets(query, typeFilter==='vcf'?{readType:'vcf'}:undefined),
+        listDataAssets(appliedSearch.current, typeFilter==='vcf'?{readType:'vcf'}:undefined),
         getDataCenterConfig(),
         refreshCapacity(),
       ]);
@@ -167,13 +170,21 @@ export default function DataCenterPage() {
     }
   }, [t,typeFilter,refreshCapacity]);
 
-  React.useEffect(() => { void load(''); }, [load]);
+  React.useEffect(() => { void load(); }, [load]);
+
+  function submitSearch() {
+    if (appliedSearch.current !== search.trim()) {
+      appliedSearch.current = search.trim();
+      pagination.onPageChange(1);
+    }
+    void load();
+  }
   const hasPendingLocalRegistrations = assets.some(isPendingLocalRegistration);
   React.useEffect(() => {
     if (!hasPendingLocalRegistrations || loading) return;
-    const timer = window.setInterval(() => void load(search, true), 30000);
+    const timer = window.setInterval(() => void load(true), 30000);
     return () => window.clearInterval(timer);
-  }, [hasPendingLocalRegistrations, loading, load, search]);
+  }, [hasPendingLocalRegistrations, loading, load]);
   React.useEffect(() => {
     const refresh = () => { void refreshCapacity().catch(() => undefined); };
     const timer = window.setInterval(refresh, 10000);
@@ -182,13 +193,13 @@ export default function DataCenterPage() {
   }, [refreshCapacity]);
 
   const retryStatusKey = Object.entries(retries).map(([id, item]) => `${id}:${item.status}`).join(',');
-  React.useEffect(() => { if (retryStatusKey) void load(search); }, [retryStatusKey, load, search]);
+  React.useEffect(() => { if (retryStatusKey) void load(); }, [retryStatusKey, load]);
 
   const activeFileKey = (activeUpload?.files ?? []).map((file) => file.fileId).join(',');
   const activeUploadStatus = activeUpload?.status;
   React.useEffect(() => {
-    if (activeFileKey) void load(search);
-  }, [activeFileKey, activeUploadStatus, load, search]);
+    if (activeFileKey) void load();
+  }, [activeFileKey, activeUploadStatus, load]);
 
   // A browser refresh can leave only durable upload metadata in localStorage.
   // Ask the backend for every remembered file before showing a resume prompt:
@@ -296,7 +307,7 @@ export default function DataCenterPage() {
         admissionRef.current = false;
         setCheckingCapacity(false);
       } });
-      await load(search);
+      await load();
     } catch (err) {
       setError(err instanceof Error ? errorText(err, t) : t("data.uploadFaileda6f805"));
     } finally {
@@ -321,7 +332,7 @@ export default function DataCenterPage() {
       else await deleteDataAsset(deleting.id);
       forgetFile(deleting.id);
       setDeleting(null);
-      await load(search);
+      await load();
     } catch (err) {
       if (liveFile) markFileFailed(deleting.id, err instanceof Error ? errorText(err, t) : t("data.deleteFailed72250c"));
       setError(err instanceof Error ? errorText(err, t) : t("data.deleteFailed72250c"));
@@ -338,7 +349,7 @@ export default function DataCenterPage() {
       setRead2(null);
       setInternalId('');
       setUploadPolicyAcknowledged(false);
-      await load(search);
+      await load();
     } catch (err) {
       setCancelUploadConfirmOpen(false);
       setError(err instanceof Error ? errorText(err, t) : t("data.unableToCancelUpload7c0a32"));
@@ -352,7 +363,7 @@ export default function DataCenterPage() {
     try {
       await updateDataAsset(editing.id, editingInternalId);
       setEditing(null);
-      await load(search);
+      await load();
     } catch (err) {
       setError(err instanceof Error ? errorText(err, t) : t("data.unableToUpdateInternalId2dac48"));
     } finally {
@@ -380,7 +391,7 @@ export default function DataCenterPage() {
     setError('');
     try {
       await retryFile(asset.id, file);
-      await load(search);
+      await load();
     } catch (err) {
       setError(err instanceof Error ? errorText(err, t) : t("data.uploadRetryFailed61b24c"));
     }
@@ -511,7 +522,7 @@ export default function DataCenterPage() {
         </div>
       )}
 
-      {error && <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-danger-muted bg-danger-subtle px-4 py-3 text-sm text-danger-fg"><span>{error}</span>{loadFailed && <Button permission={null} action="retry" variant="secondary" size="small" disabled={loading} onClick={() => void load(search)}>{t("billing.retryLoading7b4939")}</Button>}</div>}
+      {error && <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-danger-muted bg-danger-subtle px-4 py-3 text-sm text-danger-fg"><span>{error}</span>{loadFailed && <Button permission={null} action="retry" variant="secondary" size="small" disabled={loading} onClick={() => void load()}>{t("billing.retryLoading7b4939")}</Button>}</div>}
 
       {activeUpload?.status === 'needs_file' && !recoveryChecking && !recoveryDismissed && (
         <div className="mb-4 rounded-md border border-warning-muted bg-warning-subtle px-4 py-3 text-sm text-warning-fg">
@@ -534,11 +545,14 @@ export default function DataCenterPage() {
         <div className="yj-panel-header flex-wrap gap-3 px-5 py-4">
           <div className="flex min-w-0 w-full sm:w-auto sm:min-w-[280px] flex-none sm:flex-1 items-center gap-2">
             <div className="w-full max-w-[420px]">
-              <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("data.searchFilenameInternalIdOrUuid462576")} leftElement={<Search className="h-4 w-4" />} onKeyDown={(event) => { if (event.key === 'Enter') void load(search); }} />
+              <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("data.searchFilenameInternalIdOrUuid462576")} leftElement={<Search className="h-4 w-4" />} onKeyDown={(event) => { if (event.key === 'Enter') submitSearch(); }} />
             </div>
-            <HoverHint content={t("admin.refresh38108e")}><ActionButton size="small" iconOnly action="refresh" variant="ghost" type="button" className="rounded-md p-2 text-fg-muted hover:bg-canvas-subtle hover:text-fg-default"  aria-label={t("admin.refresh38108e")} onClick={() => void load(search)} /></HoverHint>
+            <HoverHint content={t("admin.refresh38108e")}><ActionButton size="small" iconOnly action="refresh" variant="ghost" type="button" className="rounded-md p-2 text-fg-muted hover:bg-canvas-subtle hover:text-fg-default"  aria-label={t("admin.refresh38108e")} onClick={submitSearch} /></HoverHint>
           </div>
-          <select aria-label={t('vcfAnnotation.allTypes')} className="h-8 rounded-md border border-border-default bg-canvas-default px-3 py-0 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-emphasis" value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}><option value="">{t('vcfAnnotation.allTypes')}</option><option value="vcf">{t('vcfAnnotation.vcfOnly')}</option><option value="fastq">{t('vcfAnnotation.fastqOnly')}</option></select>
+          <select aria-label={t('vcfAnnotation.allTypes')} className="h-8 rounded-md border border-border-default bg-canvas-default px-3 py-0 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-emphasis" value={typeFilter} onChange={event => {
+            setTypeFilter(event.target.value);
+            pagination.onPageChange(1);
+          }}><option value="">{t('vcfAnnotation.allTypes')}</option><option value="vcf">{t('vcfAnnotation.vcfOnly')}</option><option value="fastq">{t('vcfAnnotation.fastqOnly')}</option></select>
           <Button action="upload" disabled={canceling} onClick={()=>{setVcfMode(true);setRead1(null);setRead2(null);setUploadPolicyAcknowledged(false);setUploadOpen(true);}}>{t('vcfAnnotation.upload')}</Button>
           {getRuntimeBackendFlavor() !== 'onykia' && <>
            <Button permission={null} action="download" disabled={!config?.local_import_directory} onClick={downloadLocalTemplate}>{t('samples.downloadTemplatea3afb2')}</Button>
@@ -549,14 +563,14 @@ export default function DataCenterPage() {
 
         {loading ? (
           <div className="flex h-48 items-center justify-center gap-2 text-sm text-fg-muted"><Loader2 className="h-4 w-4 animate-spin" />{t("data.loadingDataAssetsfde260")}</div>
-        ) : loadFailed && assets.length === 0 ? null : assets.length > 0 ? (
-          <MobileRecordList data={assets} columns={localizeDisplay(columns, t)}
+        ) : loadFailed && assets.length === 0 ? null : visibleAssets.length > 0 ? (
+          <MobileRecordList data={visibleAssets} columns={localizeDisplay(columns, t)}
             title={asset => <>{asset.internal_id || asset.file_name}<ExampleBadge origin={asset.source} /></>}
             primaryLabel={asset => t(asset.internal_id ? "history.sampleId6d686e" : "data.file49deaf")} statusColumn="status"
             secondaryColumns={['file', 'readType', 'size']} detailColumns={['uuid', 'expiresAt', 'createdAt']}
             desktop={
               <DataTable
-                data={assets}
+                data={visibleAssets}
                 columns={localizeDisplay(columns, t)}
                 rowKey="id"
                 density="compact"
@@ -565,10 +579,11 @@ export default function DataCenterPage() {
             }
           />
         ) : (
-          <div className="flex h-48 flex-col items-center justify-center text-fg-muted"><Database className="mb-2 h-6 w-6" /><p className="text-sm">{search.trim() ? t("data.noMatchingDataAssets29b140") : t("data.noDataAssets5862af")}</p></div>
+          <div className="flex h-48 flex-col items-center justify-center text-fg-muted"><Database className="mb-2 h-6 w-6" /><p className="text-sm">{appliedSearch.current ? t("data.noMatchingDataAssets29b140") : t("data.noDataAssets5862af")}</p></div>
         )}
+        {!loading && <RecordPagination {...pagination} />}
       </div>
-      {localImportOpen && getRuntimeBackendFlavor() !== 'onykia' && <LocalDataImportModal directory={config?.local_import_directory||''} onClose={()=>setLocalImportOpen(false)} onImported={()=>void load(search)}/>}
+      {localImportOpen && getRuntimeBackendFlavor() !== 'onykia' && <LocalDataImportModal directory={config?.local_import_directory||''} onClose={()=>setLocalImportOpen(false)} onImported={()=>void load()}/>}
       <input ref={retryInputRef} type="file" className="hidden" onChange={(event) => void handleRetryFile(event.target.files?.[0])} />
 
       <AppModal
