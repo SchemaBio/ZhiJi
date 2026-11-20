@@ -1,0 +1,258 @@
+{
+  "zh-CN": [
+    {
+      "id": "scope",
+      "title": "一、服务提供者与适用范围",
+      "paragraphs": [
+        "本实例由部署者自行部署、配置和运营。向您提供服务并处理账户、样本及分析数据的主体是本实例的部署者。开源软件维护者不因提供代码而成为本实例的服务提供者，也不会仅因您使用本软件而接收本实例的数据。",
+        "本说明是开源部署的通用隐私说明。部署者应补充其主体名称、联系方式、服务区域和实际处理安排，并向使用者提供适用于本实例的隐私政策。"
+      ]
+    },
+    {
+      "id": "information",
+      "title": "二、信息类别与用途",
+      "paragraphs": [
+        "本实例可能处理账户姓名和邮箱、登录与操作记录，以及使用者提交的样本编号、测序文件、表型、变异、分析结果和报告。具体类别取决于启用的功能和提交的内容。",
+        "这些信息用于账户认证、权限管理、执行工作流、展示结果、保存文件及安全审计。遗传和健康信息可能属于敏感个人信息，化名或样本编号不保证匿名。请仅提交完成分析所需且已获授权的信息。"
+      ]
+    },
+    {
+      "id": "basis",
+      "title": "三、部署者与使用者的责任",
+      "paragraphs": [
+        "部署者负责确定处理目的与合法依据、提供必要告知、落实所需授权，并配置访问权限和安全措施。使用者应确认有权提交相关数据。软件许可不替代数据授权、结果验证或适用的专业资质与监管要求。"
+      ]
+    },
+    {
+      "id": "providers",
+      "title": "四、外部服务与 AI",
+      "paragraphs": [
+        "数据存放位置、云存储、网络代理、外部注释接口及模型服务均由部署者选择和配置。启用外部服务时，相应数据可能被发送给这些服务，具体范围、保存期限、服务区域及跨境安排应由部署者说明。",
+        "使用 AI 辅助时，选取的表型、变异及相关上下文可能发送至所配置的模型提供商。请先核实部署配置，不要提交无关身份信息。开源代码本身不代表对外部服务的数据使用或训练规则作出保证。"
+      ]
+    },
+    {
+      "id": "retention",
+      "title": "五、数据保留、备份与删除",
+      "paragraphs": [
+        "开源版不预设托管服务的统一保留期限。账户、样本、原始文件、结果、日志及缓存的实际保留和清理规则，由部署者配置并告知。请向本实例管理员核实当前策略。",
+        "备份、快照、对象历史版本、导出副本和运行中任务的清理由部署者管理。删除界面记录不一定表示所有副本已被物理销毁；部署者应说明删除范围、处理时限及适用例外。"
+      ]
+    },
+    {
+      "id": "security",
+      "title": "六、安全与浏览器存储",
+      "paragraphs": [
+        "部署者负责配置网络访问、加密传输、数据库与文件权限、日志、备份及事件响应。请妥善保管账户凭据，发现异常访问时联系本实例管理员。",
+        "浏览器使用登录认证、CSRF 防护等必要 Cookie，并保存语言等界面偏好。部分查询和导出在浏览器内完成；实际启用的非必要统计或其他技术应由部署者另行说明。"
+      ]
+    },
+    {
+      "id": "rights",
+      "title": "七、隐私请求与特殊数据",
+      "paragraphs": [
+        "查阅、更正、删除账户或数据，以及获取处理规则等请求，请通过部署者公布的渠道联系本实例管理员。部署者负责按适用要求核实请求、答复并协调备份或外部服务中的处理。请勿在公开代码仓库的问题区提交个人信息、样本或凭据。",
+        "处理未成年人、遗传及健康信息时，部署者和使用者应落实适用的授权与保护要求。软件与分析输出不自动构成经过验证的医疗产品或诊断结论。"
+      ]
+    },
+    {
+      "id": "changes",
+      "title": "八、说明的更新",
+      "paragraphs": [
+        "部署者应在服务配置或数据处理安排发生变化时更新本实例的隐私说明，并通过适当方式告知使用者。本通用说明不能替代对实际部署情况的完整披露。"
+      ]
+    }
+  ],
+  "zh-Hant": [
+    {
+      "id": "scope",
+      "title": "一、服務提供者與適用範圍",
+      "paragraphs": [
+        "本實例由部署者自行部署、設定和營運。向您提供服務並處理帳戶、樣本及分析資料的主體是本實例的部署者。開源軟體維護者不因提供程式碼而成為本實例的服務提供者，也不會僅因您使用本軟體而接收本實例的資料。",
+        "本說明是開源部署的通用隱私說明。部署者應補充其主體名稱、聯絡方式、服務區域和實際處理安排，並提供適用於本實例的隱私政策。"
+      ]
+    },
+    {
+      "id": "information",
+      "title": "二、資訊類別與用途",
+      "paragraphs": [
+        "本實例可能處理帳戶姓名和電子郵件、登入與操作紀錄，以及使用者提交的樣本編號、定序檔案、表型、變異、分析結果和報告。具體類別取決於啟用的功能和提交的內容。",
+        "這些資訊用於帳戶驗證、權限管理、執行工作流程、展示結果、儲存檔案及安全稽核。遺傳和健康資訊可能屬於敏感個人資訊，化名或樣本編號不保證匿名。請僅提交必要且已獲授權的資訊。"
+      ]
+    },
+    {
+      "id": "basis",
+      "title": "三、部署者與使用者的責任",
+      "paragraphs": [
+        "部署者負責確定處理目的與合法依據、提供必要告知、落實所需授權，並設定存取權限和安全措施。使用者應確認有權提交相關資料。軟體授權不替代資料授權、結果驗證或適用的專業資格與監管要求。"
+      ]
+    },
+    {
+      "id": "providers",
+      "title": "四、外部服務與 AI",
+      "paragraphs": [
+        "資料儲存位置、雲端儲存、網路代理、外部註釋介面及模型服務均由部署者選擇和設定。啟用外部服務時，相應資料可能傳送至這些服務；範圍、保存期限、區域及跨境安排應由部署者說明。",
+        "使用 AI 輔助時，選取的表型、變異及相關內容可能傳送至所設定的模型提供者。請先核實部署設定，不要提交無關身分資訊。開源程式碼本身不保證外部服務的資料使用或訓練規則。"
+      ]
+    },
+    {
+      "id": "retention",
+      "title": "五、資料保留、備份與刪除",
+      "paragraphs": [
+        "開源版不預設託管服務的統一保留期限。帳戶、樣本、原始檔案、結果、日誌及快取的保留與清理規則由部署者設定並告知。請向本實例管理員核實目前策略。",
+        "備份、快照、物件歷史版本、匯出副本和執行中工作的清理由部署者管理。刪除介面紀錄不一定表示所有副本已被實體銷毀；部署者應說明刪除範圍、時限及適用例外。"
+      ]
+    },
+    {
+      "id": "security",
+      "title": "六、安全與瀏覽器儲存",
+      "paragraphs": [
+        "部署者負責設定網路存取、加密傳輸、資料庫與檔案權限、日誌、備份及事件應變。請妥善保管帳戶憑證，發現異常時聯絡本實例管理員。",
+        "瀏覽器使用登入驗證、CSRF 防護等必要 Cookie，並儲存語言等介面偏好。部分查詢和匯出在瀏覽器內完成；非必要統計或其他技術應由部署者另行說明。"
+      ]
+    },
+    {
+      "id": "rights",
+      "title": "七、隱私請求與特殊資料",
+      "paragraphs": [
+        "查閱、更正、刪除帳戶或資料，以及取得處理規則等請求，請透過部署者公布的管道聯絡本實例管理員。部署者負責核實、答覆並協調備份或外部服務中的處理。請勿在公開程式碼儲存庫的問題區提交個人資訊、樣本或憑證。",
+        "處理未成年人、遺傳及健康資訊時，部署者和使用者應落實適用的授權與保護要求。軟體與分析輸出不自動構成經過驗證的醫療產品或診斷結論。"
+      ]
+    },
+    {
+      "id": "changes",
+      "title": "八、說明的更新",
+      "paragraphs": [
+        "部署者應在服務設定或資料處理安排變更時更新本實例的隱私說明，並適當告知使用者。本通用說明不能替代對實際部署情況的完整揭露。"
+      ]
+    }
+  ],
+  "en": [
+    {
+      "id": "scope",
+      "title": "1. Service operator and scope",
+      "paragraphs": [
+        "This instance is deployed, configured and operated by its deployer. The deployer provides the service and processes its account, sample and analysis data. Providing open-source code does not make software maintainers the operator of this instance or automatically send instance data to them.",
+        "This is a general notice for self-hosted deployments. The deployer must provide its identity, contact channels, service regions and actual processing arrangements, and publish a privacy policy applicable to this instance."
+      ]
+    },
+    {
+      "id": "information",
+      "title": "2. Information and purposes",
+      "paragraphs": [
+        "This instance may process account names and email addresses, access and activity logs, and submitted sample identifiers, sequencing files, phenotypes, variants, results and reports. The actual categories depend on enabled features and submitted content.",
+        "Information supports authentication, permissions, workflows, result display, file storage and security auditing. Genetic and health information can be sensitive; pseudonyms and sample identifiers do not guarantee anonymity. Submit only necessary information you are authorized to provide."
+      ]
+    },
+    {
+      "id": "basis",
+      "title": "3. Responsibilities",
+      "paragraphs": [
+        "The deployer determines processing purposes and legal grounds, provides required notices, obtains necessary authorizations and configures access and security. Users must have authority to submit data. The software license does not replace data authorization, result validation, professional qualifications or applicable regulatory requirements."
+      ]
+    },
+    {
+      "id": "providers",
+      "title": "4. External services and AI",
+      "paragraphs": [
+        "The deployer selects and configures data locations, cloud storage, network proxies, external annotation APIs and model services. Enabled integrations may receive data. The deployer must explain the scope, retention, regions and international transfer arrangements.",
+        "AI assistance may send selected phenotypes, variants and context to the configured model provider. Check the deployment settings first and avoid unrelated identifying information. Open-source code does not guarantee external providers’ data use or training policies."
+      ]
+    },
+    {
+      "id": "retention",
+      "title": "5. Retention, backups and deletion",
+      "paragraphs": [
+        "The open-source edition does not impose a hosted service’s universal retention period. The deployer configures and communicates retention and cleanup of accounts, samples, source files, results, logs and caches. Ask the instance administrator about the active policy.",
+        "The deployer manages backups, snapshots, object versions, exported copies and running tasks. Removing a record from the interface does not necessarily physically destroy all copies. The deployer must explain deletion scope, timing and applicable exceptions."
+      ]
+    },
+    {
+      "id": "security",
+      "title": "6. Security and browser storage",
+      "paragraphs": [
+        "The deployer configures network access, encrypted transport, database and file permissions, logging, backups and incident response. Protect account credentials and report unusual access to the instance administrator.",
+        "The browser uses necessary authentication and CSRF cookies and stores preferences such as language. Some queries and exports run in the browser. The deployer must disclose any enabled nonessential analytics or other technologies."
+      ]
+    },
+    {
+      "id": "rights",
+      "title": "7. Privacy requests and special data",
+      "paragraphs": [
+        "For access, correction, account or data deletion, or information about processing, contact the instance administrator through channels published by the deployer. The deployer handles verification, responses and coordination with backups or external services. Do not submit personal information, samples or credentials in public repository issues.",
+        "Deployers and users must meet applicable authorization and protection requirements for children’s, genetic and health information. The software and its outputs do not automatically constitute a validated medical product or diagnosis."
+      ]
+    },
+    {
+      "id": "changes",
+      "title": "8. Updates",
+      "paragraphs": [
+        "The deployer should update this instance’s notice when service settings or processing arrangements change and inform users appropriately. This general notice does not replace complete disclosure of the actual deployment."
+      ]
+    }
+  ],
+  "es-419": [
+    {
+      "id": "scope",
+      "title": "1. Operador y alcance",
+      "paragraphs": [
+        "Esta instancia es desplegada, configurada y operada por quien la implementa. Ese operador presta el servicio y trata los datos de cuentas, muestras y análisis. Proporcionar código abierto no convierte a sus mantenedores en operadores de esta instancia ni les envía automáticamente sus datos.",
+        "Este es un aviso general para despliegues propios. El operador debe publicar su identidad, vías de contacto, regiones y prácticas reales de tratamiento, y ofrecer una política de privacidad aplicable a esta instancia."
+      ]
+    },
+    {
+      "id": "information",
+      "title": "2. Información y finalidades",
+      "paragraphs": [
+        "La instancia puede tratar nombres y correos de cuentas, registros de acceso y actividad, identificadores de muestras, archivos de secuenciación, fenotipos, variantes, resultados e informes. Las categorías dependen de las funciones habilitadas y del contenido enviado.",
+        "La información permite autenticar cuentas, gestionar permisos, ejecutar flujos, mostrar resultados, almacenar archivos y auditar la seguridad. Los datos genéticos y de salud pueden ser sensibles; los seudónimos no garantizan el anonimato. Envíe solo información necesaria y autorizada."
+      ]
+    },
+    {
+      "id": "basis",
+      "title": "3. Responsabilidades",
+      "paragraphs": [
+        "El operador determina las finalidades y bases legales, ofrece los avisos necesarios, obtiene las autorizaciones y configura el acceso y la seguridad. Los usuarios deben tener autoridad para enviar datos. La licencia no sustituye la autorización de datos, la validación de resultados ni los requisitos profesionales o regulatorios aplicables."
+      ]
+    },
+    {
+      "id": "providers",
+      "title": "4. Servicios externos e IA",
+      "paragraphs": [
+        "El operador selecciona la ubicación de datos, almacenamiento en la nube, proxies, APIs de anotación y modelos. Las integraciones habilitadas pueden recibir datos. El operador debe explicar el alcance, la conservación, las regiones y las transferencias internacionales.",
+        "La asistencia de IA puede enviar fenotipos, variantes y contexto al proveedor configurado. Verifique primero la configuración y evite identificadores innecesarios. El código abierto no garantiza las políticas de uso de datos o entrenamiento de proveedores externos."
+      ]
+    },
+    {
+      "id": "retention",
+      "title": "5. Conservación, respaldos y eliminación",
+      "paragraphs": [
+        "La edición de código abierto no impone un plazo uniforme de un servicio alojado. El operador configura y comunica la conservación y limpieza de cuentas, muestras, archivos originales, resultados, registros y cachés. Consulte la política activa con el administrador.",
+        "El operador gestiona respaldos, instantáneas, versiones de objetos, copias exportadas y tareas en ejecución. Eliminar un registro de la interfaz no necesariamente destruye todas las copias. Debe explicar el alcance, los plazos y las excepciones."
+      ]
+    },
+    {
+      "id": "security",
+      "title": "6. Seguridad y almacenamiento del navegador",
+      "paragraphs": [
+        "El operador configura el acceso de red, transporte cifrado, permisos de archivos y bases de datos, registros, respaldos y respuesta a incidentes. Proteja las credenciales e informe accesos inusuales al administrador.",
+        "El navegador utiliza cookies necesarias de autenticación y protección CSRF y guarda preferencias como el idioma. Algunas consultas y exportaciones se ejecutan en el navegador. El operador debe informar sobre tecnologías o estadísticas no esenciales habilitadas."
+      ]
+    },
+    {
+      "id": "rights",
+      "title": "7. Solicitudes y datos especiales",
+      "paragraphs": [
+        "Para acceder, corregir o eliminar cuentas o datos, o conocer el tratamiento, contacte al administrador por los canales publicados por el operador. Este gestiona la verificación, respuesta y coordinación con respaldos o servicios externos. No publique datos personales, muestras ni credenciales en incidencias públicas del repositorio.",
+        "Operadores y usuarios deben cumplir los requisitos aplicables de autorización y protección de datos de menores, genéticos y de salud. El software y sus resultados no constituyen automáticamente un producto médico validado ni un diagnóstico."
+      ]
+    },
+    {
+      "id": "changes",
+      "title": "8. Actualizaciones",
+      "paragraphs": [
+        "El operador debe actualizar el aviso de esta instancia cuando cambie la configuración o el tratamiento y avisar a los usuarios. Este texto general no sustituye la divulgación completa del despliegue real."
+      ]
+    }
+  ]
+}

@@ -24,7 +24,7 @@ export interface DataAsset {
   reference_genome?: 'GRCh37' | 'GRCh38';
   provider: 'local' | 's3';
   status: DataAssetStatus;
-  source: 'upload' | 'scanner' | 'local_import';
+  source: 'upload' | 'scanner' | 'local_import' | 'example';
   expires_at?: string;
   created_at: string;
   updated_at: string;
@@ -545,8 +545,8 @@ export async function uploadBEDFile(
   if (session.storage_type === 'presigned') await confirmUpload(session.file_id, { signal });
 }
 
-export function deleteDataAsset(id: string): Promise<void> {
-  return api.delete(`/v1/data/assets/${encodeURIComponent(id)}`);
+export function deleteDataAsset(id: string, pendingRegistration = false): Promise<void> {
+  return api.delete(`/v1/data/assets/${encodeURIComponent(id)}${pendingRegistration ? '?pending_registration=true' : ''}`);
 }
 
 export function updateDataAsset(id: string, internalId: string): Promise<DataAsset> {

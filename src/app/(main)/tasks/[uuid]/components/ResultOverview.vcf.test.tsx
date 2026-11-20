@@ -1,0 +1,146 @@
+import * as React from 'react';
+import {render,screen,within} from '@testing-library/react';
+import {expect,it,vi} from 'vitest';
+import {ResultOverview} from './ResultOverview';
+import type {ResultContext} from '../types';
+const sample={id:'sample',internalId:'SAMPLE-001',gender:'male' as const};
+function context(overrides:Partial<ResultContext>={}):ResultContext {
+ return {state:'ready',importStatus:'success',taskUuid:'task',executionAttemptId:'attempt',version:'1',members:[{id:'sample',sampleId:'sample',role:'single'}],qc:[],reference:{available:true,declaredId:'GRCh37'},types:{'snv-indel':{total:54946,focused:2,reviewed:0},'cnv-segment':{total:10,focused:0,reviewed:0}},permissions:{canReview:true,canFocus:true},capabilities:['snv_indel','report','vcf'],vcfAnnotation:{preprocessing:{input_records:67605,normalized_variants:54946,excluded_reference_gt:11501,excluded_missing_or_partial_gt:1158,excluded_unsupported_type:0},sex_inference:{x_sum:834,x_hom:730,x_haploid_alt:0,ratio:730/834,sex:'male'}},...overrides};
+}
+it('uses WES-style panels with SNV/InDel only and verifies sex from chrX',()=>{
+ const navigate=vi.fn();render(<ResultOverview context={context()} sample={sample} onNavigate={navigate}/>);
+ expect(screen.queryByRole('heading',{name:'质控统计'})).not.toBeInTheDocument();
+ const counts=screen.getByRole('region',{name:'结果类型概览'});
+ expect(within(counts).getByRole('button',{name:/SNV.*InDel/})).toBeInTheDocument();
+ expect(within(counts).queryByText(/CNV|STR|线粒体/)).not.toBeInTheDocument();
+ const verification=screen.getByRole('region',{name:'样本与性别核对'});
+ expect(within(verification).getByText('SAMPLE-001')).toBeInTheDocument();
+ expect(within(verification).getAllByText('男')).toHaveLength(2);
+ expect(within(verification).getByText('87.53%')).toBeInTheDocument();
+ expect(within(verification).getByText('一致')).toBeInTheDocument();
+ expect(within(verification).queryByText(/SRY/)).not.toBeInTheDocument();
+ expect(within(verification).getByText(/X 染色体结构变异.*降低推算准确率/)).toBeInTheDocument();
+ expect(screen.getByRole('heading',{name:'VCF 预处理统计'})).toBeInTheDocument();
+});
+it('flags a difference from registered sex without changing the sample',()=>{
+ const registered={...sample,gender:'female' as const};
+ render(<ResultOverview context={context()} sample={registered} onNavigate={vi.fn()}/>);
+ const verification=screen.getByRole('region',{name:'样本与性别核对'});
+ expect(within(verification).getByText('需核对')).toHaveClass('text-warning-fg');
+ expect(registered.gender).toBe('female');
+});
+it.each([
+ {x_sum:0,ratio:null,sex:'unknown',reason:'no_x_variants'},
+ {x_sum:5,ratio:1,sex:'unknown',reason:'insufficient_x_variants'},
+ {x_sum:100,ratio:0.6,sex:'unknown',reason:'ratio_in_uncertain_interval'},
+])('keeps uncertain chrX inference unknown for $reason',inference=>{
+ render(<ResultOverview context={context({vcfAnnotation:{sex_inference:inference}})} sample={sample} onNavigate={vi.fn()}/>);
+ const verification=screen.getByRole('region',{name:'样本与性别核对'});
+ expect(within(verification).getByText('未知')).toBeInTheDocument();
+ expect(within(verification).getByText('信息不足')).toBeInTheDocument();
+ expect(within(verification).queryByText('女')).not.toBeInTheDocument();
+});
+it('keeps WES QC and its SRY-based verification unchanged',()=>{
+ render(<ResultOverview context={context({capabilities:['snv_indel','qc'],vcfAnnotation:undefined,qc:[{memberId:'sample',memberRole:'single',sampleId:'sample',declaredGender:'male',predictedGender:'male',genderComparison:'match',sryCutoff:5,metrics:[{key:'sryCount',value:10}]}]})} sample={sample} onNavigate={vi.fn()}/>);
+ expect(screen.getByRole('heading',{name:'质控统计'})).toBeInTheDocument();
+ expect(screen.getByText('SRY reads')).toBeInTheDocument();
+ expect(screen.getByText(/数据性别来自本次 SRY 检测/)).toBeInTheDocument();
+ expect(screen.queryByRole('heading',{name:'VCF 预处理统计'})).not.toBeInTheDocument();
+});
+
+const trioSample={...sample, fatherSampleInternalId:'FATHER-002',motherSampleInternalId:'MOTHER-003',father:{state:'found' as const,internal_id:'FATHER-002',gender:'unknown',data_ready:true},mother:{state:'found' as const,internal_id:'MOTHER-003',gender:'unknown',data_ready:true}};
+function trioContext():ResultContext {
+ return context({capabilities:['snv_indel','qc'],vcfAnnotation:undefined,members:['proband','father','mother'].map(role=>({id:role,role,sampleId:role})),qc:['proband','father','mother'].map(role=>({memberId:role,memberRole:role,sampleId:role,declaredGender:role==='proband'?'male':'unknown',predictedGender:role==='mother'?'female':'male',genderComparison:'unknown',metrics:[]}))});
+}
+it('resolves legacy trio role aliases to internal numbers and fills unknown parent sex',()=>{
+ render(<ResultOverview context={trioContext()} sample={trioSample} onNavigate={vi.fn()}/>);
+ const table=screen.getByRole('region',{name:'样本与性别核对'});
+ const rows=within(table).getAllByRole('row').slice(1);
+ for(const [i,id,gender] of [[0,'SAMPLE-001','男'],[1,'FATHER-002','男'],[2,'MOTHER-003','女']] as const){
+  const cells=within(rows[i]).getAllByRole('cell');
+  expect(cells[1]).toHaveTextContent(id);expect(cells[2]).toHaveTextContent(gender);expect(cells[5]).toHaveTextContent('一致');
+ }
+ expect(within(table).queryByText(/^(proband|father|mother)$/)).not.toBeInTheDocument();
+ expect(trioSample.father.gender).toBe('unknown');
+});
+it('preserves explicit conflicting parent sex and recalculates mismatch styling',()=>{
+ render(<ResultOverview context={trioContext()} sample={{...trioSample,father:{...trioSample.father,gender:'female'}}} onNavigate={vi.fn()}/>);
+ const row=within(screen.getByRole('region',{name:'样本与性别核对'})).getAllByRole('row')[2];
+ expect(within(row).getAllByRole('cell')[2]).toHaveTextContent('女');
+ expect(within(row).getByText('需核对')).toHaveClass('text-warning-fg');
+});
+it('uses task snapshot numbers and genders before current family links',()=>{
+ const snapshot=['proband','father','mother'].map(role=>({role,sample_id:role,internal_id:'SNAPSHOT-'+role,gender:role==='mother'?'female':'male',affected_status:'',read1_asset_id:'',read2_asset_id:''}));
+ render(<ResultOverview context={trioContext()} sample={trioSample} snapshot={snapshot} onNavigate={vi.fn()}/>);
+ const table=screen.getByRole('region',{name:'样本与性别核对'});
+ for(const member of snapshot)expect(within(table).getByText(member.internal_id)).toBeInTheDocument();
+ expect(within(table).queryByText('FATHER-002')).not.toBeInTheDocument();
+});
+
+it('shows current Peddy pairs using internal sample numbers and preserves negative/zero values',()=>{
+ const current=trioContext();current.kinship={status:'ready',source:'Peddy',pairs:[{sampleA:'father',sampleB:'mother',relatedness:-0.06313,pedigreeRelatedness:0,ibs0:545,ibs2:2133,sites:4920,pedigreeParents:false,predictedParents:false,parentError:false,sampleDuplicationError:false},{sampleA:'father',sampleB:'proband',relatedness:0.6492,pedigreeRelatedness:0.5,ibs0:6,ibs2:2789,sites:4920,pedigreeParents:true,predictedParents:true,parentError:false,sampleDuplicationError:false}]};
+ render(<ResultOverview context={current} sample={trioSample} onNavigate={vi.fn()}/>);
+ const table=screen.getByRole('region',{name:'亲缘关系核对（Peddy）'});
+ expect(within(table).getAllByText('FATHER-002')).toHaveLength(2);
+ expect(within(table).getByText('MOTHER-003')).toBeInTheDocument();expect(within(table).getByText('SAMPLE-001')).toBeInTheDocument();
+ expect(within(table).getByText('-0.06313')).toBeInTheDocument();expect(within(table).getByText('0')).toBeInTheDocument();
+ expect(within(table).queryByText(/^(father|mother|proband)$/)).not.toBeInTheDocument();
+ expect(within(table).getAllByRole('row')).toHaveLength(3);
+});
+it.each(['pending','empty','unavailable','invalid'] as const)('shows explicit %s instead of a successful relationship check',status=>{
+ const current=trioContext();current.kinship={status,source:'Peddy',pairs:[]};
+ render(<ResultOverview context={current} sample={trioSample} onNavigate={vi.fn()}/>);
+ const section=screen.getByRole('region',{name:'亲缘关系核对（Peddy）'});
+ expect(within(section).queryByRole('table')).not.toBeInTheDocument();expect(within(section).queryByText('否')).not.toBeInTheDocument();
+});
+
+it('shows oncology depth tiers and the three paired QC cards', () => {
+ const current = context({
+  vcfAnnotation: undefined, capabilities: ['qc'],
+  members: [{id:'tumor',role:'tumor',internalId:'T-01'}, {id:'normal',role:'normal',internalId:'N-01'}],
+  qcPairConcordance:{status:'mismatch',concordance:{value:0.87,unit:'fraction'},sitesCompared:46},
+  qc:[
+   {memberId:'tumor',memberRole:'tumor',declaredGender:'male',predictedGender:'male',metrics:[
+    {key:'coverageGte30x',value:99,unit:'percent'},
+    {key:'mtAverageDepth',value:25},
+    {key:'mtCoverageGt0x',value:90,unit:'percent'},
+    {key:'coverageGte200x',value:0.805,unit:'fraction',source:'xamdst'},
+    {key:'coverageGte500x',value:0.5,unit:'percent'},
+    {key:'contaminationRate',value:0,unit:'fraction'},
+    {key:'sryCount',value:202},
+   ]},
+   {memberId:'normal',memberRole:'normal',declaredGender:'male',predictedGender:'female',contaminationStatus:'warning',
+    metrics:[{key:'contaminationRate',value:7.1,unit:'percent',source:'Mock contamination estimate'}]},
+  ],
+ });
+ render(<ResultOverview context={current} oncologyTabs={[]} paired onNavigate={vi.fn()}/>);
+ const table = screen.getByRole('region',{name:'质控统计'});
+ for (const depth of [200,500,1000,3000,10000]) expect(within(table).getByRole('rowheader',{name:'≥'+depth+'× 覆盖率（去重）'})).toBeInTheDocument();
+ expect(within(table).queryByText(/≥30×|99\.00%|线粒体/)).not.toBeInTheDocument();
+ expect(within(table).getByText('80.50%')).toBeInTheDocument();
+ expect(within(table).getByText('0.50%')).toBeInTheDocument();
+ const pair = screen.getByRole('region',{name:'配对样本一致性评估'});
+ expect(within(pair).getByText('87%')).toBeInTheDocument();
+ expect(within(pair).getByText('不一致')).toHaveClass('text-warning-fg');
+ expect(within(pair).getByRole('columnheader',{name:'比较位点数'})).toBeInTheDocument();
+ expect(within(pair).getByText('T-01 / N-01')).toBeInTheDocument();
+ expect(within(pair).getByRole('button',{name:'复制'})).toBeInTheDocument();
+ const contamination = screen.getByRole('region',{name:'样本污染程度'});
+ expect(within(contamination).getByText('0%')).toBeInTheDocument();
+ expect(within(contamination).getByText('7.1%')).toBeInTheDocument();
+ expect(within(contamination).getByText('需核对')).toHaveClass('text-warning-fg');
+ expect(within(contamination).getByRole('button',{name:'复制'})).toBeInTheDocument();
+ const sex = within(screen.getByRole('region',{name:'样本性别'}));
+ expect(sex.getByText('需核对')).toHaveClass('text-warning-fg');
+ expect(sex.getByRole('columnheader',{name:'SRY reads'})).toBeInTheDocument();
+ expect(sex.getByText('202')).toBeInTheDocument();
+ expect(sex.getByRole('button',{name:'复制'})).toBeInTheDocument();
+});
+
+it('keeps VCF preprocessing and leaves unavailable VCF contamination unscored', () => {
+ render(<ResultOverview context={context()} sample={sample} oncologyTabs={[{id:'snv-indel',label:'SNV/InDel'}]} paired={false} onNavigate={vi.fn()}/>);
+ expect(screen.queryByRole('region',{name:'配对样本一致性评估'})).not.toBeInTheDocument();
+ expect(screen.getByRole('heading',{name:'VCF 预处理统计'})).toBeInTheDocument();
+ expect(within(screen.getByRole('region',{name:'样本污染程度'})).getByText('未提供')).toBeInTheDocument();
+ expect(within(screen.getByRole('region',{name:'样本性别'})).getByText('87.53%')).toBeInTheDocument();
+});

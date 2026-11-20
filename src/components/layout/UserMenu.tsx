@@ -1,4 +1,7 @@
 'use client';
+import { useText } from '@/i18n/useText';
+
+
 
 import * as React from 'react';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
@@ -12,37 +15,61 @@ interface UserMenuProps {
   collapsed?: boolean;
 }
 
+interface UserData {
+  id: string;
+  username: string;
+  name: string;
+  role: string;
+  avatar: string | null;
+}
+
 export function UserMenu({ collapsed = false }: UserMenuProps) {
+  const t = useText();
   const [open, setOpen] = React.useState(false);
-  const router = useRouter();
   const { user, logout } = useAuth();
+  const router = useRouter();
 
   const handleLogout = async () => {
-    setOpen(false);
     await logout();
+    setOpen(false);
     router.push('/login');
   };
 
-  const displayName = user?.name || '未登录';
-  const displayEmail = user?.email || '';
+  const displayUser: UserData = user ? {
+    id: user.id,
+    username: user.email,
+    name: user.name,
+    role: user.systemRole === 'PLATFORM_ADMIN' ? t("settings.platformAdministrator02926d") : t("settings.organizationUser568bac"),
+    avatar: null,
+  } : {
+    id: '',
+    name: '未登录',
+    username: '',
+    role: t("common.notSignedIne8041a"),
+    avatar: null,
+  };
 
   const triggerButton = (
     <PopoverPrimitive.Trigger asChild>
       <button
         className={`
-          flex items-center gap-2 rounded-md transition-all duration-fast
-          hover:bg-canvas-inset p-1.5
+          flex items-center gap-2 rounded-md px-2 py-2
+          transition-colors duration-fast hover:bg-[var(--yj-panel-subtle)]
           ${collapsed ? 'justify-center' : 'w-full'}
         `}
-        aria-label="用户菜单"
+        aria-label={t("common.userMenua375a2")}
       >
         <Avatar
-          name={displayName}
+          src={displayUser.avatar || undefined}
+          name={displayUser.name}
           size="small"
-          className="bg-accent-emphasis text-white ring-2 ring-accent-muted"
+          className="bg-accent-emphasis text-white"
         />
         {!collapsed && (
-          <span className="text-sm text-fg-default truncate">{displayName}</span>
+          <div className="min-w-0 text-left">
+            <div className="truncate text-sm font-medium text-fg-default">{displayUser.name}</div>
+            <div className="truncate text-[11px] text-fg-muted">{displayUser.role}</div>
+          </div>
         )}
       </button>
     </PopoverPrimitive.Trigger>
@@ -51,7 +78,7 @@ export function UserMenu({ collapsed = false }: UserMenuProps) {
   return (
     <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
       {collapsed ? (
-        <Tooltip content={displayName} placement="right" variant="nav">
+        <Tooltip content={displayUser.name} placement="right" variant="nav">
           {triggerButton}
         </Tooltip>
       ) : (
@@ -61,44 +88,31 @@ export function UserMenu({ collapsed = false }: UserMenuProps) {
         <PopoverPrimitive.Content
           side={collapsed ? 'right' : 'top'}
           align={collapsed ? 'start' : 'center'}
-          sideOffset={4}
-          className="z-50 w-56 rounded-md border border-border bg-canvas shadow-md"
+          sideOffset={8}
+          className="z-50 w-60 overflow-hidden rounded-xl border border-[var(--yj-border-subtle)] bg-[var(--yj-panel-bg)] shadow-[var(--yj-shadow-raised)]"
         >
-          {/* User info */}
-          <div className="px-3 py-2 border-b border-border">
-            <p className="text-sm font-medium text-fg-default">{displayName}</p>
-            <p className="text-xs text-fg-muted">{displayEmail}</p>
+          <div className="border-b border-[var(--yj-border-subtle)] bg-[var(--yj-panel-subtle)] px-4 py-3">
+            <p className="text-sm font-semibold text-fg-default">{displayUser.name}</p>
+            {displayUser.username && <p className="mt-0.5 break-all text-xs text-fg-muted">{displayUser.username}</p>}
           </div>
 
-          {/* Menu items */}
-          <div className="py-1 border-b border-border">
+          <div className="border-b border-[var(--yj-border-subtle)] p-1.5">
             <Link
               href="/settings"
               onClick={() => setOpen(false)}
-              className={`
-                flex items-center gap-2 w-full px-3 py-2 text-sm text-left
-                text-fg-default hover:bg-canvas-subtle
-                transition-colors duration-fast
-              `}
+              className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-fg-default transition-colors hover:bg-[var(--yj-panel-subtle)]"
             >
-              <User className="w-4 h-4" />
-              个人设置
-            </Link>
+              <User className="h-4 w-4 text-fg-muted" />
+              {t("settings.personalSettingsf787ab")}</Link>
           </div>
 
-          {/* Logout */}
-          <div className="py-1">
+          <div className="p-1.5">
             <button
               onClick={handleLogout}
-              className={`
-                flex items-center gap-2 w-full px-3 py-2 text-sm text-left
-                text-danger-fg hover:bg-danger-subtle
-                transition-colors duration-fast
-              `}
+              className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-danger-fg transition-colors hover:bg-danger-subtle"
             >
-              <LogOut className="w-4 h-4" />
-              退出登录
-            </button>
+              <LogOut className="h-4 w-4" />
+              {t("common.signOut094774")}</button>
           </div>
         </PopoverPrimitive.Content>
       </PopoverPrimitive.Portal>

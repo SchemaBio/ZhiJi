@@ -1,0 +1,394 @@
+'use client';
+import { isFamilyAnalysis, isFamilyAnalysisUnavailable } from '@/lib/analysis-availability';
+import {TaskSamplePicker} from '@/components/shared/TaskSamplePicker';
+import {VCFTaskFields} from '@/components/shared/VCFTaskFields';
+import { RetentionNotice } from '@/components/shared/ResearchPolicy';
+import { LocalizedError } from '@/i18n/errors';
+
+import { errorText } from '@/i18n/errors';
+
+import { useText } from '@/i18n/useText';
+
+
+
+import { ActionButton as Button } from '@/components/shared/ActionButton';
+
+
+import * as React from 'react';
+import Link from 'next/link';
+import { Input, Select } from '@schema/ui-kit';
+import { Coins, Loader2, SlidersHorizontal, Database, FileText } from 'lucide-react';
+import { AppModal, ModalSectionHeading } from '@/components/shared';
+import {
+  pipelinesApi,
+  isTaskPipelineUnavailable,
+  taskPipelineOption,
+  templatesApi,
+  type TaskPipelineOption,
+  type TaskSampleListItem,
+  type TaskTemplateOption,
+} from '@/lib/task-resources';
+import { calculateEstimatedCredits, getBillingBalance, getBillingConfig, type BillingBalance, type BillingConfig } from '@/lib/billing';
+import { getRuntimeBackendFlavor } from '@/lib/runtime-config';
+import { tasksApi } from '@/lib/tasks';
+import {TrioSummary,useTrioContext} from '@/components/shared/TrioSummary';
+
+export interface NewTaskFormData {
+ vcf_asset_id?: string; vcf_sample_name?: string;
+  sampleId: string;
+  internalId: string;
+  pipelineId: string;
+  pipelineName: string;
+  pipelineVersion: string;
+  remark: string;
+  template: string;
+  inputs: Record<string, unknown>;
+}
+
+interface NewTaskModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSubmit: (data: NewTaskFormData) => void | Promise<void>;
+}
+
+export function NewTaskModal({ isOpen, onClose, onSubmit }: NewTaskModalProps) {
+  const t = useText();
+  const isSaaS = getRuntimeBackendFlavor() === 'onykia';
+  const [pipelines, setPipelines] = React.useState<TaskPipelineOption[]>([]);
+  const [templates, setTemplates] = React.useState<TaskTemplateOption[]>([]);
+  const [selectedSample, setSelectedSample] = React.useState<TaskSampleListItem | null>(null);
+  const [normalSample, setNormalSample] = React.useState<TaskSampleListItem | null>(null);
+  const [vcfAssetId,setVcfAssetId]=React.useState('');
+ const [vcfSampleName,setVcfSampleName]=React.useState('');
+ const [selectedPipeline, setSelectedPipeline] = React.useState<string>('');
+  const [remark, setRemark] = React.useState('');
+  const [loadingResources, setLoadingResources] = React.useState(false);
+  const [submitting, setSubmitting] = React.useState(false);
+  const [retentionAcknowledged, setRetentionAcknowledged] = React.useState(false);
+  const [resourceError, setResourceError] = React.useState('');
+  const [billingBalance, setBillingBalance] = React.useState<BillingBalance | null>(null);
+  const [billingConfig, setBillingConfig] = React.useState<BillingConfig | null>(null);
+  const [estimatedMinutes, setEstimatedMinutes] = React.useState(60);
+  const [estimateStatus, setEstimateStatus] = React.useState<'idle' | 'loading' | 'ready' | 'fallback'>('idle');
+
+  React.useEffect(() => {
+    setRetentionAcknowledged(false);
+    if (!isOpen) return;
+    let cancelled = false;
+
+    async function loadResources() {
+      setLoadingResources(true);
+      setResourceError('');
+      try {
+        const [pipelineItems, templateItems] = await Promise.all([
+          pipelinesApi.list({ oncologyCatalog: true }),
+          templatesApi.list().catch(() => []),
+        ]);
+        if (cancelled) return;
+        setPipelines(pipelineItems);
+        setTemplates(templateItems);
+        const firstValue = pipelineItems.length
+          ? pipelineItems.find(pipeline => !isTaskPipelineUnavailable(pipeline))?.id ?? ''
+          : templateItems.find(template => !isFamilyAnalysisUnavailable({ template: template.name }))?.name ?? '';
+        setSelectedPipeline(current => pipelineItems.some(item => item.id === current && !isTaskPipelineUnavailable(item)) ? current : firstValue);
+        if (isSaaS) {
+          const [nextBalance, nextConfig] = await Promise.all([getBillingBalance(), getBillingConfig()]);
+          if (cancelled) return;
+          setBillingBalance(nextBalance);
+          setBillingConfig(nextConfig);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setResourceError(err instanceof Error ? errorText(err, t) : t("tasks.unableToLoadTaskResources12ee7c"));
+        }
+      } finally {
+        if (!cancelled) setLoadingResources(false);
+      }
+    }
+
+    loadResources();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, isSaaS]);
+
+  const pipelineOptions = React.useMemo(() => {
+    if (pipelines.length > 0) {
+      return pipelines.map(pipeline => taskPipelineOption(pipeline, t));
+    }
+    return templates.map(template => ({
+      value: template.name,
+      label: `${template.displayName && template.displayName !== template.name ? `${template.displayName} (${template.name})` : template.name}${isFamilyAnalysisUnavailable({ template: template.name }) ? ` · ${t('familyAnalysis.unavailable')}` : ''}`,
+      disabled: isFamilyAnalysisUnavailable({ template: template.name }),
+    }));
+  }, [pipelines, templates, t]);
+
+  const selectedPipelineInfo = pipelines.find(item => item.id === selectedPipeline);
+  const isVCF = selectedPipelineInfo?.baseType === 'vcf_annotation' || selectedPipelineInfo?.template === 'vcf2anno';
+  const isTrio = isFamilyAnalysis(selectedPipelineInfo ?? { template: selectedPipeline });
+ const trioState=useTrioContext(selectedSample?.id,isTrio);
+ const trioCanCreate = trioState.context?.ready || (!isSaaS && trioState.context?.waiting_for_data);
+  const isPaired = selectedPipelineInfo?.baseType === 'tumor_paired';
+  const normalSampleId = isPaired && normalSample?.id !== selectedSample?.id ? normalSample?.id : undefined;
+  const missingPair = isPaired && !normalSampleId;
+  const pipelineUnavailable = isTaskPipelineUnavailable(selectedPipelineInfo);
+  const changePipeline = (value: string | string[]) => {
+    setSelectedPipeline(Array.isArray(value) ? value[0] : value);
+    setVcfAssetId('');
+    setVcfSampleName('');
+  };
+
+  const resolveTemplate = (pipeline: TaskPipelineOption | undefined) => {
+    if (pipeline?.template) return pipeline.template;
+    const byBaseType: Record<string, string> = {
+      vcf_annotation: 'vcf2anno',
+      wes_single: 'single',
+      // Loligo' built-in trio/family WDL is trio.wdl; the catalog exposes it
+      // as germline_trio with shortName "trio".
+      wes_family: 'trio',
+      panel: 'panel',
+    };
+    const baseTemplate = pipeline?.baseType ? byBaseType[pipeline.baseType] : '';
+    if (baseTemplate && (templates.length === 0 || templates.some(t => t.name === baseTemplate))) {
+      return baseTemplate;
+    }
+
+    const target = `${pipeline?.id ?? selectedPipeline} ${pipeline?.name ?? ''}`.toLowerCase();
+    const matchedTemplate = templates.find(t => target.includes(t.name.toLowerCase()));
+    return matchedTemplate?.name || templates[0]?.name || pipeline?.id || selectedPipeline;
+  };
+
+  React.useEffect(() => {
+    const pipeline = pipelines.find(item => item.id === selectedPipeline);
+    if (pipelineUnavailable || missingPair || (isTrio&&!trioCanCreate) || (isVCF && !vcfAssetId) || !selectedSample?.id || !pipeline?.id) {
+      setEstimatedMinutes(isVCF ? 25 : 60);
+      setEstimateStatus('idle');
+      return;
+    }
+
+    let cancelled = false;
+    setEstimateStatus('loading');
+    tasksApi.estimate({ sampleId: selectedSample.id, pipelineId: pipeline.id, ...(isVCF?{vcf_asset_id:vcfAssetId,vcf_sample_name:vcfSampleName}:{}), ...(normalSampleId ? { normal_sample_id: normalSampleId } : {}) })
+      .then((estimate) => {
+        if (cancelled) return;
+        const minutes = Math.max(1, Math.ceil(Number(estimate.estimated_minutes)));
+        if (!Number.isFinite(minutes)) throw new LocalizedError("interface.invalidTaskEstimateb0d35f", undefined, "Invalid task estimate");
+        setEstimatedMinutes(minutes);
+        setEstimateStatus('ready');
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setEstimatedMinutes(isVCF ? 25 : 60);
+        setEstimateStatus('fallback');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pipelines, selectedPipeline, selectedSample?.id, isTrio, trioCanCreate, isVCF, vcfAssetId, vcfSampleName, pipelineUnavailable, missingPair, normalSampleId]);
+
+  const estimatedCredits = estimateStatus === 'idle' || estimateStatus === 'loading'
+    ? null
+    : calculateEstimatedCredits(estimatedMinutes, billingConfig, isVCF ? 'vcf2anno' : undefined);
+  const projectedBalance = billingBalance && estimatedCredits !== null
+    ? billingBalance.balance - estimatedCredits
+    : null;
+  const insufficientCredits = projectedBalance !== null && billingConfig !== null
+    && projectedBalance < billingConfig.min_balance;
+
+  const buildInputs = (sample: TaskSampleListItem) => {
+    return {
+      sample_name: sample.internalId || sample.id,
+      sample_id: sample.id,
+    };
+  };
+
+  const handleSubmit = async () => {
+	if (pipelineUnavailable || missingPair || isFamilyAnalysisUnavailable({ template: selectedPipeline })) return;
+    if ((isTrio&&!trioCanCreate) || (isVCF && !vcfAssetId) || !selectedSample || !selectedPipeline || submitting || (isSaaS && !retentionAcknowledged)) return;
+
+    const pipeline = pipelines.find(p => p.id === selectedPipeline);
+    const template = resolveTemplate(pipeline);
+    if (!template) return;
+
+    setSubmitting(true);
+    setResourceError('');
+    try {
+      await onSubmit({
+        sampleId: selectedSample.id,
+        internalId: selectedSample.internalId,
+        // Loligo treats a non-empty pipelineId as a concrete persisted
+        // Pipeline lookup. When the UI falls back to the template catalog, do
+        // not submit the template name as pipelineId or CreateTask will fail
+        // with "pipeline not found".
+        pipelineId: pipeline?.id || '',
+        pipelineName: pipeline?.name || template,
+        pipelineVersion: pipeline?.version || '',
+        remark,
+        template,
+        inputs: isVCF ? {} : { ...buildInputs(selectedSample), ...(normalSampleId ? { normal_sample_id: normalSampleId } : {}) },
+ ...(isVCF?{vcf_asset_id:vcfAssetId,vcf_sample_name:vcfSampleName}:{}),
+      });
+      handleClose();
+    } catch (err) {
+      setResourceError(err instanceof Error ? errorText(err, t) : t("tasks.unableToCreateTaskc0144e"));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleClose = () => {
+    if (submitting) return;
+    setSelectedSample(null);
+    setNormalSample(null);
+    setSelectedPipeline('');
+    setRemark(''); setVcfAssetId(''); setVcfSampleName('');
+    setResourceError('');
+    setRetentionAcknowledged(false);
+    onClose();
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <AppModal
+      open={isOpen}
+      onOpenChange={(open) => !open && handleClose()}
+      title={t("tasks.newAnalysisTask1d4697")}
+      size="large"
+      className="!w-[calc(100vw-2rem)] !max-w-[1280px]"
+      bodyClassName="!max-h-[calc(100vh-11rem)]"
+      footer={
+        <>
+          <Button variant="secondary" onClick={handleClose} disabled={submitting}>{t("admin.cancel4d0b46")}</Button>
+          <Button action="add" loading={submitting} loadingLabel={t("pipeline.creating8c6348")}
+            variant="primary"
+            onClick={handleSubmit}
+            disabled={(isTrio&&!trioCanCreate) || pipelineUnavailable || missingPair || isFamilyAnalysisUnavailable({ template: selectedPipeline }) || (isVCF && !vcfAssetId) || loadingResources || submitting || !selectedSample || !selectedPipeline || (isSaaS && !retentionAcknowledged)}
+
+          >
+            {t("tasks.createTaskcf42fd")}</Button>
+        </>
+      }
+    >
+      <div className="space-y-6">
+        <RetentionNotice kind="task" acknowledgement={{checked: retentionAcknowledged, onChange: setRetentionAcknowledged, disabled: submitting}} />
+        {loadingResources && (
+          <div className="flex items-center gap-2 text-sm text-fg-muted">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            {t("tasks.loadingSamplesAndPipelinesfebc8d")}</div>
+        )}
+        {resourceError && (
+          <div className="text-sm text-danger-fg bg-danger-subtle border border-danger-emphasis rounded-md px-3 py-2">
+            {resourceError}
+          </div>
+        )}
+
+        <section>
+          <ModalSectionHeading
+            icon={<SlidersHorizontal className="h-4 w-4" />}
+            title={t("tasks.taskSettings9323d0")}
+            description={t("tasks.selectASampleAndPipelineRuntimeIs8d0a44")}
+          />
+          <div className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-fg-default mb-2">{t("tasks.analysisPipeline22bb4b")}</label>
+          <Select value={selectedPipeline} onChange={changePipeline} options={pipelineOptions} placeholder={t("tasks.selectAnAnalysisPipeline6634d0")} />
+        </div>
+
+        <div className={`grid grid-cols-1 items-start gap-4 ${isVCF || isPaired ? 'lg:grid-cols-2' : ''}`}>
+          <TaskSamplePicker selected={selectedSample} onSelect={setSelectedSample} label={isPaired ? t("oncologyWorkflow.tumorSample") : undefined} trioOnly={isTrio} showSequencingStatus={!isVCF} disabled={submitting}/>
+          {isPaired && <TaskSamplePicker selected={normalSample} onSelect={setNormalSample}
+            label={t("oncologyWorkflow.normalSample")} disabled={submitting} />}
+          {isVCF && <VCFTaskFields assetId={vcfAssetId} sampleName={vcfSampleName} onAssetChange={setVcfAssetId} onSampleChange={setVcfSampleName} disabled={submitting}/>}
+        </div>
+
+        {isPaired && normalSample && normalSample.id === selectedSample?.id &&
+          <p role="alert" className="text-sm text-danger-fg">{t("oncologyWorkflow.distinctSamples")}</p>}
+        {isTrio&&<TrioSummary state={trioState}/>}
+        <div className="rounded-md border border-border-default bg-canvas-subtle px-3 py-2.5">
+          <p className="text-sm font-medium text-fg-default">{t("tasks.estimatedRuntime46b89b")}</p>
+          <p className="mt-1 text-xs leading-5 text-fg-muted">
+            {isVCF && (estimateStatus === 'ready' || estimateStatus === 'fallback')
+                    ? t('billing.vcfReservation')
+                    : estimateStatus === 'loading'
+              ? t("tasks.estimatingFromSelectedInput244ab0")
+              : estimateStatus === 'ready'
+                ? t("tasks.estimatedMinutesBasedOnLinkedRR037883", {p0: String(estimatedMinutes)})
+                : estimateStatus === 'fallback'
+                  ? t("tasks.estimationUnavailableUsingTheBasicMinuteEstimatef3a858")
+                  : t("tasks.selectASampleAndPipelineToEstimate04c387")}
+          </p>
+        </div>
+
+        {isSaaS && (
+          <div className={`flex items-center justify-between gap-4 border-y py-3 ${insufficientCredits ? 'border-danger-muted' : 'border-border-default'}`}>
+            <div className="flex items-center gap-2">
+              <Coins className="h-4 w-4 text-accent-fg" />
+              <div>
+                <div className="text-sm font-medium text-fg-default">{t("tasks.estimatedReservationaa9641")}{estimatedCredits ?? '--'} {t("billing.creditse6d317")}</div>
+                <div className="text-xs text-fg-muted">
+                  {isVCF && (estimateStatus === 'ready' || estimateStatus === 'fallback')
+                    ? t('billing.vcfReservation')
+                    : estimateStatus === 'loading'
+                    ? t("tasks.calculatingReservationFinalSettlementUsesActualRuntime65b79b")
+                    : estimateStatus === 'ready'
+                      ? t("tasks.basedOnTheServerEstimateOfMinutes5ccf25", {p0: String(estimatedMinutes)})
+                      : estimateStatus === 'fallback'
+                        ? t("tasks.basedOnTheBasicMinuteEstimateFinal595562")
+                        : t("tasks.selectInputAndPipelineToCalculateThe42aed3")}
+                </div>
+              </div>
+            </div>
+            <div className="text-right">
+              <div className={insufficientCredits ? 'text-sm font-medium text-danger-fg' : 'text-sm font-medium text-fg-default'}>
+                {t("tasks.balance239d15")}{billingBalance?.balance ?? '--'}
+              </div>
+              <div className="flex items-center justify-end gap-3 text-xs">
+                <Link href="/billing" className="text-accent-fg hover:underline">{t("settings.billingRulesab2727")}</Link>
+                <Link href="/billing/recharge" className="text-accent-fg hover:underline">{t("billing.addCreditsfa03c4")}</Link>
+              </div>
+            </div>
+          </div>
+        )}
+
+          </div>
+        </section>
+
+        {!isVCF && <section className="border-t border-[var(--yj-border-subtle)] pt-5">
+          <ModalSectionHeading
+            icon={<Database className="h-4 w-4" />}
+            title={t("samples.sequencingDataef4c3a")}
+            description={t("tasks.tasksAlwaysUseTheSampleCurrentEffective938efe")}
+          />
+          {selectedSample ? (
+            <div className={`rounded-md border px-3 py-3 ${selectedSample.matchedPair ? 'border-success-muted bg-success-subtle' : 'border-warning-muted bg-warning-subtle'}`}>
+              <div className={`text-sm font-medium ${selectedSample.matchedPair ? 'text-success-fg' : 'text-warning-fg'}`}>
+                {selectedSample.matchedPair ? t("tasks.rRReady9c9d5e") : t("tasks.taskWillAwaitSequencingDataa6dc7f")}
+              </div>
+              <div className="mt-1 text-xs leading-5 text-fg-muted">
+                {selectedSample.matchedPair
+                  ? t("tasks.analysisStartsAutomaticallyAfterCreation30cb09")
+                  : t("tasks.analysisStartsWhenACompleteRRc928c2")}
+              </div>
+            </div>
+          ) : (
+            <div className="text-sm text-fg-muted">{t("tasks.selectASampleToSeeDataReadiness9eb3aa")}</div>
+          )}
+        </section>}
+
+        <section className="border-t border-[var(--yj-border-subtle)] pt-5">
+          <ModalSectionHeading
+            icon={<FileText className="h-4 w-4" />}
+            title={t("admin.notese03614")}
+            description={t("tasks.addNotesForThisAnalysisTaskd56408")}
+          />
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-fg-muted">{t("samples.notes11abee")}</label>
+          <Input value={remark} onChange={(e) => setRemark(e.target.value)} placeholder={t("tasks.enterOptionalNotes168748")} />
+        </div>
+        </section>
+      </div>
+    </AppModal>
+  );
+}

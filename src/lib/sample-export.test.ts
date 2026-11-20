@@ -1,0 +1,39 @@
+import { describe, expect, it } from 'vitest';
+import { sampleListCSV } from './sample-export';
+import type { Sample } from '@/app/(main)/samples/types';
+import { locales } from '@/i18n/locales';
+
+const sample: Sample = {
+  id: 'sample-1', internalId: '编号甲', gender: 'female', age: 0, sampleType: '全血', batch: '批次1',
+  cancerType: '肺癌', collectionSite: '右肺上叶',
+  clinicalDiagnosis: '诊断,包含"引号"\n第二行', hpoTerms: [{ id: 'HP:0001250', name: '癫痫' }, { id: 'HP:0000252', name: '小头畸形' }],
+  matchedPair: null, matchStatus: 'unmatched', matchMode: '', autoMatchEnabled: false, remark: '',
+  createdAt: '2026-10-12T01:00:00Z', updatedAt: '2026-10-12T02:00:00Z',
+};
+
+describe('sample list CSV', () => {
+  it.each(locales)('localizes %s headers while preserving all business rows', locale => {
+    const baseline = sampleListCSV([sample]);
+    const localized = sampleListCSV([sample], locale);
+    expect(localized.slice(localized.indexOf('\r\n'))).toBe(baseline.slice(baseline.indexOf('\r\n')));
+    if (locale === 'en') expect(localized.split('\r\n')[0]).toContain('Sample ID');
+    if (locale === 'es-419') expect(localized.split('\r\n')[0]).toContain('muestra');
+  });
+  it('exports oncology fields and keeps legacy phenotypes out of the CSV', () => {
+    const csv = sampleListCSV([sample]);
+    expect(csv.startsWith('\ufeff')).toBe(true);
+    expect(csv).toContain('"编号甲","女","0"');
+    expect(csv).toContain('"诊断,包含""引号""\n第二行"');
+    expect(csv).toContain('"全血","肺癌","右肺上叶","批次1"');
+    expect(csv).not.toMatch(/HPO|HP:0001250/);
+    expect(csv).toContain('"未匹配","","",""');
+    expect(csv).toMatch(/"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}","\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}"\r\n$/);
+    expect(csv.endsWith('\r\n')).toBe(true);
+  });
+  it('keeps spreadsheet formulas in user fields as literal text', () => {
+    const csv = sampleListCSV([{ ...sample, internalId: '=SUM(1,2)', batch: ' @formula', remark: '\t=HYPERLINK("url")' }]);
+    expect(csv).toContain('"\'=SUM(1,2)"');
+    expect(csv).toContain('"\' @formula"');
+    expect(csv).toContain('"\'\t=HYPERLINK(""url"")"');
+  });
+});

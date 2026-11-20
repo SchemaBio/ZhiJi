@@ -2,8 +2,13 @@
  * 历史检出 - 类型定义
  */
 
-// ============ Tier分类 ============
-export type TierClassification = 'Tier I' | 'Tier II' | 'Tier III' | 'Tier IV' | 'Unknown';
+// ============ ACMG分类 ============
+export type ACMGClassification =
+  | 'Pathogenic'
+  | 'Likely_Pathogenic'
+  | 'VUS'
+  | 'Likely_Benign'
+  | 'Benign';
 
 // ============ 通用检出记录 ============
 export interface DetectionRecord {
@@ -16,18 +21,39 @@ export interface DetectionRecord {
   internalId: string;            // 内部编号
   reviewedAt: string;            // 审核时间
   reviewedBy: string;            // 审核人
+	 executionAttemptId?: string;
+	 variantFingerprint?: string;
+	 referenceGenome?: string;
+	 action?: 'REVIEWED' | 'REVOKED';
+	 timestampKnown?: boolean;
 }
 
-// ============ SNV/InDel分组位点 ============
+export interface ReviewEvent {
+  id: string;
+  taskUuid: string;
+  executionAttemptId: string;
+  importBatchId?: number;
+  variantType: string;
+  variantId: string;
+  variantFingerprint: string;
+  historyGroupKey?: string;
+  action: 'REVIEWED' | 'REVOKED';
+  actorEmail?: string;
+  referenceGenome?: string;
+  occurredAt?: string;
+  timestampKnown: boolean;
+  recordedAt: string;
+}
+
+// ============ SNP/Indel分组位点 ============
 export interface GroupedSNVIndel {
   groupId: string;
   gene: string;
   hgvsc: string;
   hgvsp: string;
   transcript: string;
-  clinicalSignificance: TierClassification;
+  acmgClassification: ACMGClassification;
   consequence: string;
-  alleleFrequency: number;
   rsId?: string;
   clinvarId?: string;
   gnomadAF?: number;
@@ -35,42 +61,41 @@ export interface GroupedSNVIndel {
   firstDetectedAt: string;
   lastDetectedAt: string;
   records: DetectionRecord[];
+	 referenceGenome?: string;
+	 hasUnknownReviewTime?: boolean;
 }
 
-// ============ Hotspot分组位点 ============
-export interface GroupedHotspot {
-  groupId: string;
-  gene: string;
-  mutation: string;              // 突变描述（如 L858R, 19-del）
-  transcript: string;
-  clinicalSignificance: TierClassification;
-  alleleFrequency: number;
-  detectionCount: number;
-  firstDetectedAt: string;
-  lastDetectedAt: string;
-  records: DetectionRecord[];
-}
+// ============ CNV片段分组位点 ============
+export type CNVType = 'Amplification' | 'Deletion' | 'Normal';
 
-// ============ CNV Gene分组位点 ============
-export interface GroupedCNVGene {
+export interface GroupedCNVSegment {
   groupId: string;
-  gene: string;
-  type: 'Amplification' | 'Deletion';
+  chromosome: string;
+  startPosition: number;
+  endPosition: number;
+  length: number;
+  type: CNVType;
   copyNumber: number;
+  genes: string[];
   confidence: number;
   detectionCount: number;
   firstDetectedAt: string;
   lastDetectedAt: string;
   records: DetectionRecord[];
+	 referenceGenome?: string;
+	 hasUnknownReviewTime?: boolean;
 }
 
-// ============ CNV Exon分组位点 ============
+// ============ CNV外显子分组位点 ============
 export interface GroupedCNVExon {
   groupId: string;
   gene: string;
   transcript: string;
   exon: string;
-  type: 'Amplification' | 'Deletion';
+  chromosome: string;
+  startPosition: number;
+  endPosition: number;
+  type: CNVType;
   copyNumber: number;
   ratio: number;
   confidence: number;
@@ -78,46 +103,110 @@ export interface GroupedCNVExon {
   firstDetectedAt: string;
   lastDetectedAt: string;
   records: DetectionRecord[];
+	 referenceGenome?: string;
+	 hasUnknownReviewTime?: boolean;
 }
 
-// ============ CNV Chromosome分组位点 ============
-export interface GroupedCNVChrom {
+// ============ STR分组位点 ============
+export type STRStatus = 'Normal' | 'Premutation' | 'FullMutation';
+
+export interface GroupedSTR {
+  groupId: string;
+  gene: string;
+  transcript: string;
+  locus: string;
+  repeatUnit: string;
+  normalRangeMin: number;
+  normalRangeMax: number;
+  status: STRStatus;
+  minRepeatCount: number;        // 最小重复次数
+  maxRepeatCount: number;        // 最大重复次数
+  detectionCount: number;
+  firstDetectedAt: string;
+  lastDetectedAt: string;
+  records: DetectionRecord[];
+	 referenceGenome?: string;
+	 hasUnknownReviewTime?: boolean;
+}
+
+// ============ MEI分组位点 ============
+export type MEIType = 'LINE1' | 'Alu' | 'SVA' | 'Unknown';
+
+export interface GroupedMEI {
+  groupId: string;
+  chromosome: string;
+  position: number;
+  gene: string;
+  meiType: MEIType;
+  strand: '+' | '-';
+  length: number;
+  impact?: string;
+  acmgClassification?: ACMGClassification;
+  detectionCount: number;
+  firstDetectedAt: string;
+  lastDetectedAt: string;
+  records: DetectionRecord[];
+	 referenceGenome?: string;
+	 hasUnknownReviewTime?: boolean;
+}
+
+// ============ 线粒体变异分组位点 ============
+export type MitochondrialPathogenicity =
+  | 'Pathogenic'
+  | 'Likely_Pathogenic'
+  | 'VUS'
+  | 'Likely_Benign'
+  | 'Benign';
+
+export interface GroupedMTVariant {
+  groupId: string;
+  position: number;
+  ref: string;
+  alt: string;
+  gene: string;
+  pathogenicity: MitochondrialPathogenicity;
+  associatedDisease: string;
+  haplogroup?: string;
+  minHeteroplasmy: number;       // 最小异质性
+  maxHeteroplasmy: number;       // 最大异质性
+  detectionCount: number;
+  firstDetectedAt: string;
+  lastDetectedAt: string;
+  records: DetectionRecord[];
+	 referenceGenome?: string;
+	 hasUnknownReviewTime?: boolean;
+}
+
+// ============ UPD分组位点 ============
+export type UPDType = 'Isodisomy' | 'Heterodisomy';
+export type ParentOfOrigin = 'Maternal' | 'Paternal' | 'Unknown';
+
+export interface GroupedUPDRegion {
   groupId: string;
   chromosome: string;
   startPosition: number;
   endPosition: number;
   length: number;
-  type: 'Amplification' | 'Deletion';
+  type: UPDType;
   genes: string[];
-  confidence: number;
+  parentOfOrigin?: ParentOfOrigin;
   detectionCount: number;
   firstDetectedAt: string;
   lastDetectedAt: string;
   records: DetectionRecord[];
-}
-
-// ============ Fusion分组位点 ============
-export interface GroupedFusion {
-  groupId: string;
-  geneA: string;                 // 5'端基因
-  geneB: string;                 // 3'端基因
-  fusionTranscript: string;      // 融合转录本
-  clinicalSignificance: TierClassification;
-  supportingReads: number;
-  detectionCount: number;
-  firstDetectedAt: string;
-  lastDetectedAt: string;
-  records: DetectionRecord[];
+	 referenceGenome?: string;
+	 hasUnknownReviewTime?: boolean;
 }
 
 // ============ 标签页类型 ============
 export type HistoryTabType =
   | 'snv-indel'
-  | 'hotspot'
-  | 'cnv-gene'
+  | 'cnv-segment'
   | 'cnv-exon'
-  | 'cnv-chrom'
-  | 'fusion';
+  | 'str'
+  | 'mei'
+  | 'mt'
+  | 'upd';
 
 export interface HistoryTabConfig {
   id: HistoryTabType;
@@ -125,12 +214,13 @@ export interface HistoryTabConfig {
 }
 
 export const HISTORY_TAB_CONFIGS: HistoryTabConfig[] = [
-  { id: 'snv-indel', label: 'SNV/InDel' },
-  { id: 'hotspot', label: 'Hotspot' },
-  { id: 'cnv-gene', label: 'CNV(Gene)' },
+  { id: 'snv-indel', label: 'SNP/InDel' },
+  { id: 'cnv-segment', label: 'CNV(Region)' },
   { id: 'cnv-exon', label: 'CNV(Exon)' },
-  { id: 'cnv-chrom', label: 'CNV(Chrom)' },
-  { id: 'fusion', label: 'Fusion' },
+  { id: 'str', label: '动态突变' },
+  { id: 'mei', label: 'MEI' },
+  { id: 'mt', label: '线粒体' },
+  { id: 'upd', label: 'UPD' },
 ];
 
 // ============ 表格筛选状态 ============
@@ -141,6 +231,7 @@ export interface HistoryTableFilterState {
   sortDirection?: 'asc' | 'desc';
   page: number;
   pageSize: number;
+	includeRevoked?: boolean;
 }
 
 export const DEFAULT_HISTORY_FILTER_STATE: HistoryTableFilterState = {
@@ -148,6 +239,7 @@ export const DEFAULT_HISTORY_FILTER_STATE: HistoryTableFilterState = {
   filters: {},
   page: 1,
   pageSize: 20,
+	includeRevoked: false,
 };
 
 // ============ 分页结果 ============

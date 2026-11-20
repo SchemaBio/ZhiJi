@@ -1,10 +1,18 @@
 'use client';
+import { useText } from '@/i18n/useText';
+
+
+import { ActionButton, IconActionButton } from '@/components/shared/ActionButton';
+
+import { HoverHint } from '@/components/shared/HoverHint';
+
 
 import * as React from 'react';
-import { X, Settings, Trash2, AlertCircle } from 'lucide-react';
+import { Settings, AlertCircle } from 'lucide-react';
 import { useAI } from '@/components/providers/AIProvider';
 import { AssistantChat } from './AssistantChat';
 import Link from 'next/link';
+import { getRuntimeBackendFlavor } from '@/lib/runtime-config';
 
 interface AssistantDialogProps {
   onClose: () => void;
@@ -16,7 +24,9 @@ interface AssistantDialogProps {
  * 展开后显示聊天界面
  */
 export function AssistantDialog({ onClose, isMobile }: AssistantDialogProps) {
+  const t = useText();
   const { isEnabled, isConfigured, clearHistory } = useAI();
+  const isSaaS = getRuntimeBackendFlavor() === 'onykia';
   const dialogRef = React.useRef<HTMLDivElement>(null);
 
   // 点击外部关闭
@@ -55,7 +65,7 @@ export function AssistantDialog({ onClose, isMobile }: AssistantDialogProps) {
 
   // 清空历史
   const handleClearHistory = () => {
-    if (confirm('确定要清空对话历史吗？')) {
+    if (confirm(t("assistance.clearConversationHistory25fd8c"))) {
       clearHistory();
     }
   };
@@ -77,16 +87,14 @@ export function AssistantDialog({ onClose, isMobile }: AssistantDialogProps) {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
         <div className="flex items-center gap-2">
-          <img src="/mascot.png" alt="小墨" className="w-5 h-5 object-contain" />
-          <span className="font-medium text-fg-default">小墨</span>
+          <img src="/mascot.png" alt={t("assistance.xiaomo31ed60")} className="w-5 h-5 object-contain" />
+          <span className="font-medium text-fg-default">{t("assistance.xiaomo31ed60")}</span>
         </div>
-        <button
+        <IconActionButton label={t("tasks.close6c14bd")} action="close" variant="ghost"
           onClick={onClose}
           className="p-1 rounded hover:bg-canvas-subtle text-fg-muted hover:text-fg-default transition-colors"
-          aria-label="关闭"
-        >
-          <X className="w-4 h-4" />
-        </button>
+
+         />
       </div>
 
       {/* Content */}
@@ -96,32 +104,32 @@ export function AssistantDialog({ onClose, isMobile }: AssistantDialogProps) {
           <div className="flex flex-col items-center justify-center h-full p-4 text-center">
             <AlertCircle className="w-8 h-8 text-fg-muted mb-2" />
             <p className="text-sm text-fg-muted mb-4">
-              请先配置 AI 服务
-            </p>
-            <Link
-              href="/admin"
-              onClick={onClose}
-              className="flex items-center gap-2 px-4 py-2 rounded-md bg-accent-emphasis text-white hover:opacity-90 transition-colors"
-            >
-              <Settings className="w-4 h-4" />
-              前往配置
-            </Link>
+              {t("assistance.configureTheAiServiceFirst4a3222")}</p>
+            {!isSaaS && (
+              <Link
+                href="/admin"
+                onClick={onClose}
+                className="flex items-center gap-2 px-4 py-2 rounded-md bg-accent-emphasis text-white hover:opacity-90 transition-colors"
+              >
+                <Settings className="w-4 h-4" />
+                {t("assistance.configure776cc3")}</Link>
+            )}
           </div>
         ) : !isEnabled ? (
           // 已禁用提示
           <div className="flex flex-col items-center justify-center h-full p-4 text-center">
-            <img src="/mascot.png" alt="小墨" className="w-8 h-8 object-contain mb-2" />
+            <img src="/mascot.png" alt={t("assistance.xiaomo31ed60")} className="w-8 h-8 object-contain mb-2" />
             <p className="text-sm text-fg-muted mb-4">
-              小墨已禁用
-            </p>
-            <Link
-              href="/admin"
-              onClick={onClose}
-              className="flex items-center gap-2 px-4 py-2 rounded-md bg-gray-500 text-white hover:opacity-80 transition-colors"
-            >
-              <Settings className="w-4 h-4" />
-              前往设置
-            </Link>
+              {t("assistance.xiaomoDisabled8ff96c")}</p>
+            {!isSaaS && (
+              <Link
+                href="/admin"
+                onClick={onClose}
+                className="flex items-center gap-2 px-4 py-2 rounded-md bg-gray-500 text-white hover:opacity-80 transition-colors"
+              >
+                <Settings className="w-4 h-4" />
+                {t("assistance.goToSettings9ea2c9")}</Link>
+            )}
           </div>
         ) : (
           // 聊天界面
@@ -133,16 +141,14 @@ export function AssistantDialog({ onClose, isMobile }: AssistantDialogProps) {
       {isConfigured && isEnabled && (
         <div className="flex items-center justify-between px-4 py-2 border-t border-border shrink-0">
           <span className="text-xs text-fg-muted">
-            输入自然语言指令控制页面
-          </span>
-          <button
+            {t("assistance.enterNaturalLanguageInstructionsToControlThec3e72d")}</span>
+          <HoverHint content={t("assistance.clearHistory578bbc")}><ActionButton action="delete" variant="ghost"
             onClick={handleClearHistory}
             className="flex items-center gap-1 px-2 py-1 text-xs text-fg-muted hover:text-fg-default hover:bg-canvas-subtle rounded transition-colors"
-            title="清空历史"
+
           >
-            <Trash2 className="w-3 h-3" />
-            清空
-          </button>
+
+            {t("assistance.clear84fcd7")}</ActionButton></HoverHint>
         </div>
       )}
     </div>

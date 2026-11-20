@@ -1,0 +1,4 @@
+{"temporary_gene_fixtures": [{"count": 0}]}
+{"service": "loligo", "image": "schemabio/loligo:workflow-center-20261007-f553661f", "health": "healthy"}
+{"service": "onykia", "image": "schemabio/onykia:workflow-center-20261007-f553661f", "health": "healthy"}
+{"service": "zhiji", "image": "schemabio/zhiji:workflow-center-20261007-f553661f", "health": "healthy"}

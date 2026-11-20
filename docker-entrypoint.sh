@@ -10,8 +10,7 @@ API_URL="${ZHIJI_API_URL:-${NEXT_PUBLIC_API_URL:-/api}}"
 BACKEND="${ZHIJI_BACKEND:-loligo}"
 SUPPORT_EMAIL="${ZHIJI_SUPPORT_EMAIL:-${NEXT_PUBLIC_SUPPORT_EMAIL:-}}"
 PASSWORD_RESET_ENABLED="${ZHIJI_PASSWORD_RESET_ENABLED:-${NEXT_PUBLIC_PASSWORD_RESET_ENABLED:-false}}"
-DEFAULT_LOCALE="${ZHIJI_DEFAULT_LOCALE:-${NEXT_PUBLIC_DEFAULT_LOCALE:-zh-CN}}"
-
+DEFAULT_LOCALE="${ZHIJI_DEFAULT_LOCALE-${NEXT_PUBLIC_DEFAULT_LOCALE-zh-CN}}"
 case "$DEFAULT_LOCALE" in
   zh-CN|zh-Hant|en|es-419) ;;
   *)
@@ -19,7 +18,7 @@ case "$DEFAULT_LOCALE" in
     exit 1
     ;;
 esac
-
+export DEFAULT_LOCALE
 case "$BACKEND" in
   loligo|onykia) ;;
   *)
@@ -27,8 +26,7 @@ case "$BACKEND" in
     exit 1
     ;;
 esac
-
-export API_URL BACKEND SUPPORT_EMAIL PASSWORD_RESET_ENABLED DEFAULT_LOCALE
+export API_URL BACKEND SUPPORT_EMAIL PASSWORD_RESET_ENABLED
 
 node <<'NODE' > /app/public/runtime-config.js
 const clean = (value) => String(value || '').replace(/[\r\n]/g, '');

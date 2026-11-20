@@ -1,0 +1,359 @@
+'use client';
+import { pipelineDisplayName } from '@/lib/builtin-resources';
+import { getHpoTermName } from '@/lib/hpo-terms';
+import { useResearchExpiry } from '@/lib/research-retention';
+import { clearTaskBrowserResults } from '@/lib/parquet-browser';
+import { clearTaskRowSnapshots } from '../[uuid]/result-api';
+import { useText } from '@/i18n/useText';
+import { chineseText, translateUI, type TextTranslator } from '@/i18n/text';
+
+import { HoverHint } from '@/components/shared/HoverHint';
+
+
+import * as React from 'react';
+import { tasksApi } from '@/lib/tasks';
+import type { AnalysisTaskDetail, TabType, AnalysisStatus } from '../[uuid]/types';
+import type { SampleDetail } from '@/app/(main)/samples/types';
+import { TAB_CONFIGS } from '../[uuid]/types';
+import { GENDER_CONFIG } from '@/app/(main)/samples/types';
+import {
+  SNVIndelTab,
+  CNVSegmentTab,
+  CNVExonTab,
+  STRTab,
+  MEITab,
+  MTTab,
+  UPDTab,
+  ROHTab,
+  FilesTab,
+} from '../[uuid]/components';
+import { Tag } from '@/components/shared/Tag';
+import { Clock3, Server } from 'lucide-react';
+
+interface AnalysisDetailPanelProps {
+  taskId: string;
+}
+
+const statusConfig: Record<AnalysisStatus, { label: string; variant: 'neutral' | 'success' | 'warning' | 'danger' | 'info' }> = {
+  waiting_for_data: { label: '等待数据', variant: 'warning' },
+  queued: { label: '排队中', variant: 'neutral' },
+  running: { label: '运行中', variant: 'info' },
+  completed: { label: '已完成', variant: 'success' },
+  failed: { label: '失败', variant: 'danger' },
+  cancelled: { label: '已取消', variant: 'neutral' },
+  pending_interpretation: { label: '待解读', variant: 'warning' },
+};
+
+const executionPhaseConfig: Record<string, { label: string; variant: 'neutral' | 'success' | 'warning' | 'danger' | 'info' }> = {
+  waiting_quota: { label: '等待组织名额', variant: 'warning' },
+  waiting_capacity: { label: '等待竞价节点', variant: 'warning' },
+  dispatching: { label: '申请确认中', variant: 'info' },
+  bootstrapping: { label: '初始化中', variant: 'info' },
+	diagnostic_hold: { label: '诊断日志保留中', variant: 'warning' },
+  running: { label: '计算中', variant: 'info' },
+  archiving: { label: '结果归档中', variant: 'info' },
+	terminating: { label: '释放节点中', variant: 'warning' },
+	release_failed: { label: '节点释放失败', variant: 'danger' },
+  terminal: { label: '本次执行已结束', variant: 'neutral' },
+};
+
+const executionReasonLabels: Record<string, string> = {
+  ORGANIZATION_INACTIVE: '组织已停用',
+  ADMISSION_REJECTED: '余额不足或申请未通过',
+  DISPATCH_FAILED: '执行申请未确认，系统正在对账',
+  BOOTSTRAP_FAILED: '节点初始化失败',
+  AGENT_EXITED: '节点 Agent 意外退出',
+  MAX_RUNTIME: '超过运行时限',
+  LEGACY_RECONCILIATION_REQUIRED: '等待管理员核对',
+  INSTANCE_STOPPED: '云实例已停止',
+	RELEASE_RETRY: '节点释放正在重试',
+	RELEASE_FAILED: '节点释放失败，需要管理员处理',
+	SEPIIDA_FIRST_REPORT_TIMEOUT: 'Sepiida 未按时收到任务进度',
+	INPUT_REFRESH: '输入文件地址暂时无法刷新',
+	NODE_FIRST_REPORT_TIMEOUT: '节点未在 10 分钟内完成首报',
+	NODE_HEARTBEAT_TIMEOUT: '节点心跳中断超过 5 分钟',
+	NODE_INITIALIZATION_TIMEOUT: '节点初始化超过 60 分钟',
+	NODE_CALLBACK_AUTH_FAILED: '节点状态上报鉴权失败',
+	NODE_CALLBACK_RATE_LIMITED: '节点状态上报被限流',
+	NODE_CALLBACK_UPSTREAM_ERROR: '节点状态服务暂时异常',
+	NODE_DNS_FAILED: '节点无法解析状态服务域名',
+	NODE_TLS_FAILED: '节点与状态服务的 TLS 连接失败',
+	BOOTSTRAP_DEPENDENCY_MISSING: '节点镜像缺少启动依赖',
+	REFERENCE_DATABASE_FAILED: '参考数据库准备失败',
+	INPUT_DOWNLOAD_FAILED: '输入文件下载失败',
+	AGENT_START_FAILED: 'Sepiida Agent 启动失败',
+};
+
+function formatExecutionTime(value?: string, t: TextTranslator = chineseText): string {
+  if (!value) return '-';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(t.locale, { hour12: false });
+}
+
+export function AnalysisDetailPanel({ taskId }: AnalysisDetailPanelProps) {
+  const t = useText();
+  const [task, setTask] = React.useState<AnalysisTaskDetail | null>(null);
+  const [sample, setSample] = React.useState<SampleDetail | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [activeTab, setActiveTab] = React.useState<TabType>('snv-indel');
+
+  // 各标签页的筛选状态
+  const [tabStates, setTabStates] = React.useState({
+    'snv-indel': { searchQuery: '', filters: {}, page: 1, pageSize: 20 },
+    'cnv-segment': { searchQuery: '', filters: {}, page: 1, pageSize: 20 },
+    'cnv-exon': { searchQuery: '', filters: {}, page: 1, pageSize: 20 },
+    'str': { searchQuery: '', filters: {}, page: 1, pageSize: 20 },
+    'mei': { searchQuery: '', filters: {}, page: 1, pageSize: 20 },
+    'mt': { searchQuery: '', filters: {}, page: 1, pageSize: 20 },
+    'upd': { searchQuery: '', filters: {}, page: 1, pageSize: 20 },
+    'roh': { searchQuery: '', filters: {}, page: 1, pageSize: 20 },
+  });
+
+  const getFilterState = (tab: keyof typeof tabStates) => tabStates[tab];
+  const setFilterState = (tab: keyof typeof tabStates, state: typeof tabStates[typeof tab]) => {
+    setTabStates(prev => ({ ...prev, [tab]: state }));
+  };
+
+  React.useEffect(() => {
+    async function loadTask() {
+      setLoading(true);
+      try {
+        const [taskData, sampleData] = await Promise.all([
+          tasksApi.get(taskId),
+          tasksApi.getSample(taskId).catch(() => null),
+        ]);
+        setTask(taskData);
+        setSample(sampleData);
+      } catch {
+        setTask(null);
+        setSample(null);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadTask();
+  }, [taskId]);
+
+  useResearchExpiry(task?.expiresAt,()=>{clearTaskRowSnapshots(taskId);void clearTaskBrowserResults(taskId);setTask(null);setSample(null);});
+  useResearchExpiry(sample?.expiresAt,()=>setSample(null));
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-accent-emphasis" />
+      </div>
+    );
+  }
+
+  if (!task) {
+    return (
+      <div className="flex items-center justify-center py-16 text-fg-muted">
+        {t("tasks.taskNotFound549551")}</div>
+    );
+  }
+
+  const statusInfo = statusConfig[task.status] ?? { label: task.status, variant: 'neutral' as const };
+  const executionInfo = task.executionPhase ? executionPhaseConfig[task.executionPhase] ?? { label: task.executionPhase, variant: 'neutral' as const } : null;
+
+  // 渲染当前标签页内容
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case 'snv-indel':
+        return (
+          <SNVIndelTab
+            taskId={taskId}
+            filterState={getFilterState('snv-indel')}
+            onFilterChange={(state) => setFilterState('snv-indel', state)}
+          />
+        );
+      case 'cnv-segment':
+        return (
+          <CNVSegmentTab
+            taskId={taskId}
+            filterState={getFilterState('cnv-segment')}
+            onFilterChange={(state) => setFilterState('cnv-segment', state)}
+          />
+        );
+      case 'cnv-exon':
+        return (
+          <CNVExonTab
+            taskId={taskId}
+            filterState={getFilterState('cnv-exon')}
+            onFilterChange={(state) => setFilterState('cnv-exon', state)}
+          />
+        );
+      case 'str':
+        return (
+          <STRTab
+            taskId={taskId}
+            filterState={getFilterState('str')}
+            onFilterChange={(state) => setFilterState('str', state)}
+          />
+        );
+      case 'mei':
+        return (
+          <MEITab
+            taskId={taskId}
+            filterState={getFilterState('mei')}
+            onFilterChange={(state) => setFilterState('mei', state)}
+          />
+        );
+      case 'mt':
+        return (
+          <MTTab
+            taskId={taskId}
+            filterState={getFilterState('mt')}
+            onFilterChange={(state) => setFilterState('mt', state)}
+          />
+        );
+      case 'upd':
+        return (
+          <UPDTab
+            taskId={taskId}
+            filterState={getFilterState('upd')}
+            onFilterChange={(state) => setFilterState('upd', state)}
+          />
+        );
+      case 'roh':
+        return (
+          <ROHTab
+            taskId={taskId}
+            filterState={getFilterState('roh')}
+            onFilterChange={(state) => setFilterState('roh', state)}
+          />
+        );
+      case 'files':
+        return <FilesTab taskId={taskId} />;
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div className="p-4">
+      {/* 任务信息头部 */}
+      <div className="mb-4 pb-3 border-b border-border-default">
+        <div className="flex items-center gap-3 mb-2">
+          <h3 className="text-base font-medium text-fg-default">{pipelineDisplayName(task.pipelineId ?? '', task.name || task.pipeline, t)}</h3>
+          <Tag variant={statusInfo.variant} className="text-xs">{translateUI(statusInfo.label, t)}</Tag>
+        </div>
+
+        {/* 基本信息行 */}
+        <div className="flex items-center gap-4 text-xs text-fg-muted mb-2">
+          <span>{t("tasks.sample45c5da")}{task.sampleId}</span>
+          {sample && (
+            <>
+              <span>{t("tasks.sex2b89ca")}{translateUI(GENDER_CONFIG[sample.gender].label, t)}</span>
+              {sample.age !== undefined && <span>{t("tasks.age1dcc35")}{sample.age}{t("tasks.years86f133")}</span>}
+            </>
+          )}
+          <span>{t("tasks.pipelinecc9f77")}{pipelineDisplayName(task.pipelineId ?? '', task.pipeline, t)} {task.pipelineVersion}</span>
+          <span>{t("tasks.createdcbd8a8")}{task.createdAt}</span>
+        </div>
+
+        {executionInfo && (
+          <div className="mt-3 rounded-md border border-border-default bg-canvas-inset/40 px-3 py-2 text-xs">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <span className="inline-flex items-center gap-1.5 text-fg-default">
+                <Server className="h-3.5 w-3.5 text-fg-muted" />
+                {t("tasks.executionStageb836fa")}<Tag variant={executionInfo.variant} className="text-xs">{translateUI(executionInfo.label, t)}</Tag>
+              </span>
+              {task.attemptId && <HoverHint content={task.attemptId}><span className="font-mono text-fg-muted" > {t("interface.attempt323ccf")} {task.attemptId.slice(0, 8)}…</span></HoverHint>}
+              {task.phaseUpdatedAt && (
+                <span className="inline-flex items-center gap-1 text-fg-muted">
+                  <Clock3 className="h-3.5 w-3.5" />{t("tasks.updatedAt052ec7")}{formatExecutionTime(task.phaseUpdatedAt, t)}
+                </span>
+              )}
+              {task.dispatchNextRetryAt && <span className="text-fg-muted">{t("tasks.nextRetry23d0ee")}{formatExecutionTime(task.dispatchNextRetryAt, t)}</span>}
+              {task.bootstrapLastHeartbeatAt && <span className="text-fg-muted">{t("tasks.lastHeartbeat3b4213")}{formatExecutionTime(task.bootstrapLastHeartbeatAt, t)}</span>}
+              {task.diagnosticHoldUntil && <span className="text-warning-fg">{t("tasks.logsRetainedUntil4692f6")}{formatExecutionTime(task.diagnosticHoldUntil, t)}</span>}
+            </div>
+            {task.executionReasonCode && (
+              <p className="mt-1 text-danger-fg">{translateUI(executionReasonLabels[task.executionReasonCode] ?? task.executionReasonCode, t)}</p>
+            )}
+	          {task.diagnosticSummary && <p className="mt-1 text-xs text-danger-fg">{task.diagnosticSummary}</p>}
+          </div>
+        )}
+
+        {/* 临床信息行 */}
+        {sample && (
+          <div className="text-xs space-y-1">
+            {sample.clinicalDiagnosis?.mainDiagnosis && (
+              <div className="flex items-start gap-2">
+                <span className="text-fg-muted shrink-0">{t("tasks.clinicalDiagnosis36bb16")}</span>
+                <span className="text-fg-default">{sample.clinicalDiagnosis.mainDiagnosis}</span>
+              </div>
+            )}
+            {sample.clinicalDiagnosis?.symptoms && sample.clinicalDiagnosis.symptoms.length > 0 && (
+              <div className="flex items-start gap-2">
+                <span className="text-fg-muted shrink-0">{t("tasks.symptoms542372")}</span>
+                <div className="flex flex-wrap gap-1">
+                  {sample.clinicalDiagnosis.symptoms.map((s: string, i: number) => (
+                    <Tag key={i} variant="neutral" className="text-xs">{s}</Tag>
+                  ))}
+                </div>
+              </div>
+            )}
+            {sample.clinicalDiagnosis?.hpoTerms && sample.clinicalDiagnosis.hpoTerms.length > 0 && (
+              <div className="flex items-start gap-2">
+                <span className="text-fg-muted shrink-0">HPO:</span>
+                <div className="flex flex-wrap gap-1">
+                  {sample.clinicalDiagnosis.hpoTerms.map((hpo, i) => (
+                    <HoverHint content={getHpoTermName(hpo, t.locale)} key={i}><Tag key={i} variant="info" className="text-xs font-mono" >
+                      {hpo.id}
+                    </Tag></HoverHint>
+                  ))}
+                </div>
+              </div>
+            )}
+            {sample.familyHistory?.hasHistory && (
+              <div className="flex items-start gap-2">
+                <span className="text-fg-muted shrink-0">{t("tasks.familyHistoryd63c72")}</span>
+                <span className="text-fg-default">{t("tasks.yesfbd5b7")}</span>
+                {sample.familyHistory.affectedMembers && (
+                  <div className="flex flex-wrap gap-1">
+                    {sample.familyHistory.affectedMembers.map((member, i) => (
+                      <Tag key={i} variant="warning" className="text-xs">
+                        {member.relation}: {member.condition}
+                      </Tag>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 标签页导航 */}
+      <div className="border-b border-border-default mb-4">
+        <nav className="flex gap-1" role="tablist">
+          {TAB_CONFIGS.map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => setActiveTab(tab.id)}
+                className={`
+                  px-3 py-2 text-xs font-medium border-b-2 -mb-px transition-colors
+                  ${isActive
+                    ? 'border-accent-emphasis text-accent-fg'
+                    : 'border-transparent text-fg-muted hover:text-fg-default'
+                  }
+                `}
+              >
+                {translateUI(tab.label, t)}
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+
+      {/* 标签页内容 */}
+      <div>
+        {renderTabContent()}
+      </div>
+    </div>
+  );
+}

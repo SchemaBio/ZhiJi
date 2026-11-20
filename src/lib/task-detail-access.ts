@@ -3,12 +3,14 @@ import { getRuntimeApiBaseUrl, getRuntimeBackendFlavor } from './runtime-config'
 
 export type TaskDetailAccess = 'allowed' | 'not_found' | 'unauthorized' | 'unavailable';
 
+// Never derive the credential destination from an incoming Host header.
 function taskApiBase(): string {
   const configured = process.env.ZHIJI_SERVER_API_URL || getRuntimeApiBaseUrl();
   if (/^https?:\/\//.test(configured)) return configured.replace(/\/+$/, '');
   const flavor = getRuntimeBackendFlavor();
-  const host = process.env.NODE_ENV === 'production' ? flavor : '127.0.0.1';
-  return `http://${host}:8080${configured || '/api'}`;
+  const host = process.env.NODE_ENV === 'production' ? flavor : 'localhost';
+  const port = process.env.NODE_ENV === 'production' ? '8080' : '8082';
+  return `http://${host}:${port}${configured || '/api'}`;
 }
 
 export async function checkTaskDetailAccess(id: string, token: string): Promise<TaskDetailAccess> {
@@ -16,9 +18,7 @@ export async function checkTaskDetailAccess(id: string, token: string): Promise<
   try {
     const response = await fetch(`${taskApiBase()}${prefix}/tasks/${encodeURIComponent(id)}`, {
       headers: { Authorization: `Bearer ${token}` },
-      cache: 'no-store',
-      redirect: 'manual',
-      signal: AbortSignal.timeout(5000),
+      cache: 'no-store', redirect: 'manual', signal: AbortSignal.timeout(5000),
     });
     if (response.status === 401) return 'unauthorized';
     if (response.status === 403 || response.status === 404) return 'not_found';

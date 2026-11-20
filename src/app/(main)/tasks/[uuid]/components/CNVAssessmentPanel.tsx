@@ -1,11 +1,23 @@
 'use client';
+import { useText } from '@/i18n/useText';
+
+
+import { ActionButton, IconActionButton } from '@/components/shared/ActionButton';
+
+import { useInterpretationReadOnly } from './InterpretationLock';
 
 import * as React from 'react';
-import { X, Calculator, Save, RotateCcw, ChevronDown, ChevronRight } from 'lucide-react';
-import { Tag } from '@schema/ui-kit';
-import type { 
-  CNVSegment, 
-  CNVExon, 
+import { AIAssistanceAction, AIResultCard } from '@/components/shared/AIAssistanceAction';
+import type { AIAssistanceResult } from '@/lib/ai-assistance';
+import { CNVAIReview } from './CNVAIReview';
+import { autofillCNVAssessment } from '../utils/cnv-ai';
+import { aiVariantContext } from '../utils/ai-context';
+import { WorkspaceInspector } from '@/components/shared/WorkspaceInspector';
+import { Calculator } from 'lucide-react';
+import { Tag } from '@/components/shared/Tag';
+import type {
+  CNVSegment,
+  CNVExon,
   CNVAssessment,
   ClinGenClassification,
   SectionScores,
@@ -14,8 +26,8 @@ import type {
   Section2LossCriteria,
   Section2GainCriteria,
 } from '../types';
-import { 
-  getClassificationLabel, 
+import {
+  getClassificationLabel,
   getClassificationVariant,
   formatScore,
 } from '../utils/pathogenicity-classifier';
@@ -26,6 +38,11 @@ import { Section4Panel } from './assessment/Section4Panel';
 import { Section5Panel } from './assessment/Section5Panel';
 
 interface CNVAssessmentPanelProps {
+  initialAIResult?: AIAssistanceResult;
+  taskId?: string;
+  referenceId?: string;
+  saving?: boolean;
+  error?: string | null;
   /** CNV变异数据 */
   cnv: CNVSegment | CNVExon | null;
   /** 当前评估数据 */
@@ -50,27 +67,30 @@ function ScoreSummaryCard({
   totalScore,
   sectionScores,
   isUserModified,
+  insufficient,
 }: {
   classification: ClinGenClassification;
   totalScore: number;
   sectionScores: SectionScores;
   isUserModified: boolean;
+  insufficient?: boolean;
 }) {
-  const variant = getClassificationVariant(classification);
-  const label = getClassificationLabel(classification);
+  const t = useText();
+  const variant = insufficient ? 'neutral' : getClassificationVariant(classification);
+  const label = insufficient ? t("tasks.insufficientEvidence70568c") : t(getClassificationLabel(classification) || classification);
 
   return (
     <div className="bg-canvas-subtle rounded-lg p-4 mb-4">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <Calculator className="w-4 h-4 text-fg-muted" />
-          <span className="text-sm font-medium text-fg-default">评估结果</span>
+          <span className="text-sm font-medium text-fg-default">{t("tasks.assessmentResult9dccae")}</span>
         </div>
         {isUserModified && (
-          <span className="text-xs text-warning-fg">已手动修改</span>
+          <span className="text-xs text-warning-fg">{t("tasks.manuallyModifiedd03878")}</span>
         )}
       </div>
-      
+
       <div className="flex items-center gap-3 mb-4">
         <Tag variant={variant} className="text-base px-3 py-1">
           {label}
@@ -81,7 +101,7 @@ function ScoreSummaryCard({
       </div>
 
       <div className="space-y-2">
-        <div className="text-xs text-fg-muted mb-2">各部分评分</div>
+        <div className="text-xs text-fg-muted mb-2">{t("tasks.sectionScorescbc75f")}</div>
         <ScoreBar label="Section 1" score={sectionScores.section1} />
         <ScoreBar label="Section 2" score={sectionScores.section2} />
         <ScoreBar label="Section 3" score={sectionScores.section3} />
@@ -96,25 +116,24 @@ function ScoreSummaryCard({
  * 单个分数条
  */
 function ScoreBar({ label, score }: { label: string; score: number }) {
-  const isPositive = score > 0;
   const isNegative = score < 0;
-  
+
   return (
     <div className="flex items-center gap-2 text-xs">
       <span className="w-20 text-fg-muted">{label}</span>
       <div className="flex-1 h-2 bg-canvas-inset rounded-full overflow-hidden">
-        <div 
+        <div
           className={`h-full transition-all ${
-            isPositive ? 'bg-success-fg' : isNegative ? 'bg-danger-fg' : 'bg-fg-muted'
+            'bg-fg-muted'
           }`}
-          style={{ 
+          style={{
             width: `${Math.min(Math.abs(score) * 50, 100)}%`,
             marginLeft: isNegative ? 'auto' : 0,
           }}
         />
       </div>
       <span className={`w-12 text-right font-mono ${
-        isPositive ? 'text-success-fg' : isNegative ? 'text-danger-fg' : 'text-fg-muted'
+        'text-fg-muted'
       }`}>
         {score >= 0 ? '+' : ''}{formatScore(score)}
       </span>
@@ -125,54 +144,23 @@ function ScoreBar({ label, score }: { label: string; score: number }) {
 /**
  * 可折叠的Section面板
  */
-function CollapsibleSection({
-  title,
-  score,
-  defaultOpen = false,
-  children,
-}: {
-  title: string;
-  score: number;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
-}) {
-  const [isOpen, setIsOpen] = React.useState(defaultOpen);
-
-  return (
-    <div className="border border-border rounded-lg mb-3">
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between p-3 hover:bg-canvas-subtle transition-colors"
-      >
-        <div className="flex items-center gap-2">
-          {isOpen ? (
-            <ChevronDown className="w-4 h-4 text-fg-muted" />
-          ) : (
-            <ChevronRight className="w-4 h-4 text-fg-muted" />
-          )}
-          <span className="text-sm font-medium text-fg-default">{title}</span>
-        </div>
-        <span className={`text-sm font-mono ${
-          score > 0 ? 'text-success-fg' : score < 0 ? 'text-danger-fg' : 'text-fg-muted'
-        }`}>
-          {score >= 0 ? '+' : ''}{formatScore(score)}
-        </span>
-      </button>
-      {isOpen && (
-        <div className="p-3 pt-0 border-t border-border">
-          {children}
-        </div>
-      )}
-    </div>
-  );
+function AssessmentSection({ title, score, children }: { title: string; score: number; children: React.ReactNode }) {
+  const number = title.match(/Section ([1-5])/)?.[1];
+  return <section id={`cnv-section-${number}`} className="scroll-mt-4 border-b border-border-subtle pb-4 pt-3">
+    <div className="mb-3 flex items-start justify-between gap-3"><h4 className="text-sm font-semibold">{title}</h4>
+      <span className="font-mono text-sm text-fg-muted">{score >= 0 ? '+' : ''}{formatScore(score)}</span></div>
+    {children}
+  </section>;
 }
 
 /**
  * CNV评估侧边栏主组件
  */
 export function CNVAssessmentPanel({
+  taskId, referenceId, initialAIResult,
   cnv,
+  saving = false,
+  error,
   assessment,
   isOpen,
   onClose,
@@ -180,7 +168,22 @@ export function CNVAssessmentPanel({
   onReset,
   onCriteriaChange,
 }: CNVAssessmentPanelProps) {
+  const t = useText();
+  const readOnly = useInterpretationReadOnly();
+  const [aiResult, setAIResult] = React.useState<AIAssistanceResult>();
+  React.useEffect(() => { setAIResult(initialAIResult ?? assessment?.criteria.aiReview?.result); }, [taskId, cnv?.id, initialAIResult]);
+  const filledRequests = React.useRef(new Set<string>());
+  React.useEffect(() => {
+    if (!isOpen || !cnv || !assessment || assessment.cnvId !== cnv.id || !aiResult || !onCriteriaChange || readOnly || saving) return;
+    const key = `${taskId}/${cnv.id}/${aiResult.requestId}`;
+    if (filledRequests.current.has(key)) return;
+    const filled = autofillCNVAssessment(aiResult, assessment);
+    if (!filled) return;
+    filledRequests.current.add(key);
+    onCriteriaChange(filled);
+  }, [isOpen, cnv, assessment, aiResult, onCriteriaChange, readOnly, saving, taskId]);
   if (!isOpen || !cnv || !assessment) return null;
+  if (cnv.type === 'Normal' || cnv.type === 'Unknown') return null;
 
   const isLoss = cnv.type === 'Deletion';
   const frameworkType = isLoss ? 'Loss' : 'Gain';
@@ -221,7 +224,7 @@ export function CNVAssessmentPanel({
     if (onCriteriaChange) {
       onCriteriaChange({
         ...criteria,
-        section4: newSection4,
+        section4: {...newSection4,aiReviewed:undefined},
       } as LossAssessmentCriteria | GainAssessmentCriteria);
     }
   };
@@ -238,62 +241,61 @@ export function CNVAssessmentPanel({
 
   return (
     <>
-      {/* 背景遮罩 */}
-      <div 
-        className="fixed inset-0 bg-black/20 z-40"
-        onClick={onClose}
-      />
-      
-      {/* 侧边面板 */}
-      <div className="fixed right-0 top-0 h-full w-[480px] bg-white dark:bg-[#0d1117] border-l border-border shadow-xl z-50 flex flex-col">
+      <WorkspaceInspector label={t("tasks.clingenCnvAssessment0157de")} onClose={onClose}>
         {/* 头部 */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-canvas-subtle">
           <div className="flex items-center gap-3">
             <Calculator className="w-5 h-5 text-fg-muted" />
             <div>
               <h3 className="text-base font-medium text-fg-default">
-                ClinGen CNV {frameworkType} 评估
-              </h3>
+                ClinGen CNV {frameworkType} {t("tasks.assessment6c63b7")}</h3>
               <p className="text-xs text-fg-muted">
                 {cnv.chromosome}:{cnv.startPosition}-{cnv.endPosition}
               </p>
             </div>
           </div>
-          <button
+          <IconActionButton label={t("tasks.close6c14bd")} action="close" variant="ghost"
             onClick={onClose}
             className="p-1.5 text-fg-muted hover:text-fg-default hover:bg-canvas-inset rounded transition-colors"
-            aria-label="关闭"
-          >
-            <X className="w-5 h-5" />
-          </button>
+
+           />
         </div>
 
         {/* 内容区域 */}
-        <div className="flex-1 overflow-y-auto p-4">
+        <fieldset disabled={readOnly} className="yj-inspector-content min-w-0">
+          <p className="mb-3 text-xs text-fg-muted">{t("tasks.basedOnAcmgClingenPreselectionUsesProvided16a1ce")}</p>
+          {!assessment.criteria.aiReview?.autoFilled && assessment.autoEvidenceNotes?.filter(n => !n.startsWith('phenotype.') && !n.toLowerCase().includes('pending')).map(note => <p key={note} className="mb-2 rounded bg-canvas-subtle p-2 text-xs text-fg-muted">{note}</p>)}
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-semibold">{t("tasks.aiAssistedAssessment6b72ee")}</span><AIAssistanceAction key={`${taskId}/${cnv.id}`} disabled={readOnly||saving||!taskId} input={{feature:isLoss?'cnv_loss':'cnv_gain',taskId,reference:referenceId,variant:aiVariantContext(cnv),calculator:assessment}} onResult={setAIResult} /></div>
+          {aiResult && <div className="mb-4"><AIResultCard result={aiResult} /></div>}
+          {aiResult && onCriteriaChange && <CNVAIReview key={`${taskId}/${cnv.id}/${aiResult.requestId}`} result={aiResult} assessment={assessment} onApply={onCriteriaChange} disabled={readOnly||saving} />}
+          {assessment.criteria.section4.aiReviewed?.length ? <div className="mb-3 text-xs"><p>{t('assistance.cnvReviewedLiterature')}</p>{assessment.criteria.section4.aiReviewed.map(c=><p key={c.code}>{c.code} · {(c.scoreHundredths/100).toFixed(2)} · {c.reason}</p>)}<button type="button" className="yj-tool-button" disabled={readOnly||saving} onClick={()=>onCriteriaChange?.({...criteria,section4:{...criteria.section4,aiReviewed:undefined}})}>{t('assistance.cnvClearReviewedLiterature')}</button></div>:null}
           {/* 分数汇总 */}
           <ScoreSummaryCard
             classification={assessment.classification}
             totalScore={assessment.totalScore}
             sectionScores={assessment.sectionScores}
             isUserModified={assessment.isUserModified}
+            insufficient={!assessment.criteria.aiReview?.autoFilled && assessment.assessmentState === 'insufficient_evidence'}
           />
 
+          <nav aria-label={t("tasks.assessmentSections8c836d")} className="mb-3 flex flex-wrap gap-2">
+            {[t("tasks.genomicContentd5200b"), t("tasks.regionOverlap5aab91"), t("tasks.geneCount236d07"), t("tasks.literatureEvidence2f2a4c"), t("samples.familyHistory35fef1")].map((label, index) => <a key={label} href={`#cnv-section-${index + 1}`} className="yj-tool-button">{index + 1}. {label}</a>)}
+          </nav>
           {/* Section 面板 */}
           <div className="space-y-2">
-            <CollapsibleSection 
-              title="Section 1: 基因组内容初始评估" 
+            <AssessmentSection
+              title={t("tasks.sectionInitialGenomicContentAssessment875250")}
               score={assessment.sectionScores.section1}
-              defaultOpen
             >
               <Section1Panel
                 cnvType={cnv.type}
                 criteria={criteria.section1}
                 onChange={handleSection1Change}
               />
-            </CollapsibleSection>
+            </AssessmentSection>
 
-            <CollapsibleSection 
-              title={`Section 2: ${isLoss ? 'HI' : 'TS/HI'}基因/区域重叠`}
+            <AssessmentSection
+              title={t("tasks.sectionGeneRegionOverlapa4193a", {p0: String(isLoss ? 'HI' : 'TS/HI')})}
               score={assessment.sectionScores.section2}
             >
               <Section2Panel
@@ -301,10 +303,10 @@ export function CNVAssessmentPanel({
                 criteria={criteria.section2}
                 onChange={handleSection2Change}
               />
-            </CollapsibleSection>
+            </AssessmentSection>
 
-            <CollapsibleSection 
-              title="Section 3: 基因数量评估" 
+            <AssessmentSection
+              title={t("tasks.sectionGeneCountAssessment441573")}
               score={assessment.sectionScores.section3}
             >
               <Section3Panel
@@ -312,10 +314,10 @@ export function CNVAssessmentPanel({
                 criteria={criteria.section3}
                 onChange={handleSection3Change}
               />
-            </CollapsibleSection>
+            </AssessmentSection>
 
-            <CollapsibleSection 
-              title="Section 4: 文献和数据库证据" 
+            <AssessmentSection
+              title={t("tasks.sectionLiteratureAndDatabaseEvidencecbeccf")}
               score={assessment.sectionScores.section4}
             >
               <Section4Panel
@@ -323,10 +325,10 @@ export function CNVAssessmentPanel({
                 criteria={criteria.section4}
                 onChange={handleSection4Change}
               />
-            </CollapsibleSection>
+            </AssessmentSection>
 
-            <CollapsibleSection 
-              title="Section 5: 遗传模式/家族史" 
+            <AssessmentSection
+              title={t("tasks.sectionInheritanceFamilyHistoryd426e7")}
               score={assessment.sectionScores.section5}
             >
               <Section5Panel
@@ -334,34 +336,35 @@ export function CNVAssessmentPanel({
                 criteria={criteria.section5}
                 onChange={handleSection5Change}
               />
-            </CollapsibleSection>
+            </AssessmentSection>
           </div>
-        </div>
+        </fieldset>
 
         {/* 底部操作栏 */}
         <div className="border-t border-border p-4 bg-canvas-subtle">
+          {error && <p role="alert" className="mb-2 text-sm text-danger-fg">{error}</p>}
           <div className="flex gap-3">
             {onReset && (
-              <button
+              <ActionButton action="retry" variant="ghost"
+                disabled={readOnly || saving}
                 onClick={onReset}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2 text-sm border border-border rounded-md hover:bg-canvas-inset transition-colors"
               >
-                <RotateCcw className="w-4 h-4" />
-                重置
-              </button>
+
+                {t("tasks.reset3d8134")}</ActionButton>
             )}
             {onSave && (
-              <button
+              <ActionButton loading={saving} loadingLabel={t("tasks.saving6644f0")} action="save" variant="ghost"
+                disabled={readOnly || saving}
                 onClick={() => onSave(assessment)}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2 text-sm bg-accent-emphasis text-white rounded-md hover:bg-accent-fg transition-colors"
               >
-                <Save className="w-4 h-4" />
-                保存
-              </button>
+
+                {t("data.savefadf24")}</ActionButton>
             )}
           </div>
         </div>
-      </div>
+      </WorkspaceInspector>
     </>
   );
 }

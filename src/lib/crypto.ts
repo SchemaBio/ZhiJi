@@ -6,11 +6,15 @@
  * hashing requires BACKEND changes to hash the incoming value before bcrypt
  * comparison.
  *
- * To enable, set NEXT_PUBLIC_PASSWORD_HASH_ENABLED=true in .env and update
- * the backend to apply the same SHA-256 transform before bcrypt verify.
+ * To enable, set NEXT_PUBLIC_PASSWORD_HASH_ENABLED=true in .env and keep it
+ * aligned with Onykia CLIENT_PASSWORD_HASH_ENABLED.
  */
 
 const HASH_ENABLED = process.env.NEXT_PUBLIC_PASSWORD_HASH_ENABLED === 'true';
+
+export function isPasswordHashEnabled(): boolean {
+  return HASH_ENABLED;
+}
 
 async function sha256(message: string): Promise<string> {
   const encoder = new TextEncoder();

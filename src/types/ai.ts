@@ -7,8 +7,10 @@
  * AI 服务配置
  */
 export interface AIConfig {
-  openaiApiEndpoint: string;
+  /** OpenAI API 端点 (由后端代理，前端不需要 API Key) */
+  /** 使用的模型名称 */
   openaiModel: string;
+  /** AI 助手是否启用 */
   aiAssistantEnabled: boolean;
 }
 
@@ -34,13 +36,13 @@ export interface ConversationMessage {
  * 默认 AI 配置
  */
 export const DEFAULT_AI_CONFIG: AIConfig = {
-  openaiApiEndpoint: '',
-  openaiModel: 'gpt-4',
-  aiAssistantEnabled: true,
+  openaiModel: 'gpt-4o',
+  aiAssistantEnabled: false,
 };
 
 /**
- * localStorage 存储键名
+ * localStorage storage keys. HISTORY is legacy-only and is removed at startup;
+ * AI conversations stay in memory because they may contain sample/patient data.
  */
 export const AI_STORAGE_KEYS = {
   CONFIG: 'schema_ai_config',

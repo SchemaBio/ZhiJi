@@ -1,10 +1,11 @@
 'use client';
-
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { BusinessPermissionContext } from './BusinessPermissionProvider';
 import { userHasPermission, type BusinessPermission } from '@/lib/permissions';
 import { getRuntimeBackendFlavor } from '@/lib/runtime-config';
 import { LocalizedError } from '@/i18n/errors';
+
+
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { User, UserOrganizationInfo, OrgRole } from '@/types/user';
 import type { LoginResponse } from '@/types/auth';
 import { authApi } from '@/lib/auth';
@@ -12,6 +13,27 @@ import { STORAGE_KEYS } from '@/lib/storage';
 import { hashPassword } from '@/lib/crypto';
 
 const DEV_MOCK_AUTH = process.env.NODE_ENV !== 'production' && process.env.NEXT_PUBLIC_DEV_MOCK_AUTH === 'true';
+
+const MOCK_USER: User = {
+  id: 'dev-mock-user-001',
+  email: 'dev@example.com',
+  name: '开发者',
+  systemRole: 'PLATFORM_ADMIN',
+  orgId: 'dev-mock-org-001',
+  isActive: true,
+  approvalStatus: 'approved',
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+};
+
+const MOCK_ORG: UserOrganizationInfo = {
+  id: 'dev-mock-org-001',
+  name: '开发测试机构',
+  slug: 'dev-lab',
+  description: '本地开发环境',
+  orgRole: 'PLATFORM_ADMIN',
+  isActive: true,
+};
 
 interface AuthContextType {
   hasPermission: (permission: BusinessPermission) => boolean;
@@ -25,6 +47,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   updateProfile: (data: { name: string }) => Promise<User>;
   changePassword: (oldPassword: string, newPassword: string) => Promise<void>;
+  deleteAccount: (email: string) => Promise<void>;
   switchOrganization: (orgId: string) => Promise<void>;
   hasOrgRole: (role: OrgRole) => boolean;
   hasAnyOrgRole: (...roles: OrgRole[]) => boolean;
@@ -34,17 +57,52 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const PUBLIC_AUTH_PATHS = ['/login', '/register', '/forgot-password', '/reset-password', '/privacy', '/verify-email', '/about'] as const;
-
-function isPublicAuthPath(pathname: string): boolean {
-  return PUBLIC_AUTH_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
-}
-
 function clearStoredAuth() {
   localStorage.removeItem(STORAGE_KEYS.USER);
   localStorage.removeItem(STORAGE_KEYS.LEGACY_AUTH_TOKENS);
   localStorage.removeItem(STORAGE_KEYS.ORGANIZATIONS);
   localStorage.removeItem(STORAGE_KEYS.CURRENT_ORG);
+  localStorage.removeItem(STORAGE_KEYS.ACTIVE_UPLOAD);
+}
+
+function persistDevAuthState(nextUser: User, nextOrgs: UserOrganizationInfo[], nextOrg: UserOrganizationInfo | null) {
+  if (!DEV_MOCK_AUTH) {
+    // Production sessions are cookie-backed and revalidated with the backend on
+    // page load. Do not keep account/org profile data in localStorage.
+    localStorage.removeItem(STORAGE_KEYS.USER);
+    localStorage.removeItem(STORAGE_KEYS.ORGANIZATIONS);
+    localStorage.removeItem(STORAGE_KEYS.CURRENT_ORG);
+    return;
+  }
+
+  localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(nextUser));
+  localStorage.setItem(STORAGE_KEYS.ORGANIZATIONS, JSON.stringify(nextOrgs));
+  if (nextOrg) {
+    localStorage.setItem(STORAGE_KEYS.CURRENT_ORG, JSON.stringify(nextOrg));
+  } else {
+    localStorage.removeItem(STORAGE_KEYS.CURRENT_ORG);
+  }
+}
+
+/** Public auth pages: unauthenticated users belong here; never hard-reload them. */
+const PUBLIC_AUTH_PATHS = ['/login', '/register', '/forgot-password', '/reset-password', '/privacy', '/agreement', '/service', '/terms', '/refund', '/verify-email'] as const;
+
+function isPublicAuthPath(pathname: string): boolean {
+  return PUBLIC_AUTH_PATHS.some(
+    (path) => pathname === path || pathname.startsWith(`${path}/`)
+  );
+}
+
+function loginRedirectForCurrentPath(): string {
+  if (typeof window === 'undefined') return '/login';
+  const { pathname, search } = window.location;
+  // Already on an auth page — do not bounce to /login (avoids full-page reload loops).
+  if (isPublicAuthPath(pathname)) {
+    return `${pathname}${search}`;
+  }
+  const next = `${pathname}${search}`;
+  if (!next || next === '/') return '/login';
+  return `/login?next=${encodeURIComponent(next)}`;
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -54,10 +112,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   const applySession = useCallback((nextUser: User, nextOrg: UserOrganizationInfo | null) => {
+    const nextOrgs = nextOrg ? [nextOrg] : [];
     setUser(nextUser);
-    setOrganizations(nextOrg ? [nextOrg] : []);
+    setOrganizations(nextOrgs);
     setCurrentOrg(nextOrg);
-    if (!DEV_MOCK_AUTH) clearStoredAuth();
+    persistDevAuthState(nextUser, nextOrgs, nextOrg);
   }, []);
 
   const resetSession = useCallback(() => {
@@ -67,30 +126,65 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setCurrentOrg(null);
   }, []);
 
+  // Validate the cookie-backed session with the backend before trusting stored UI state.
   useEffect(() => {
     let cancelled = false;
+
     const loadSession = async () => {
+      if (DEV_MOCK_AUTH) {
+        const storedUser = localStorage.getItem(STORAGE_KEYS.USER);
+        if (storedUser) {
+          try {
+            const parsed = JSON.parse(storedUser) as User;
+            applySession(parsed, MOCK_ORG);
+          } catch {
+            resetSession();
+          }
+        }
+        setIsLoading(false);
+        return;
+      }
+
       try {
+        // Probe auth first. /v1/orgs/me is not under /v1/auth/*, so a parallel
+        // unauthenticated 401 would fire schema:auth-expired (refresh + hard
+        // redirect). Only fetch org after we know the session is valid.
         const currentUser = await authApi.getCurrentUser();
         if (cancelled) return;
-        const organization = await authApi.getCurrentOrganization().catch(() => null);
+        const currentOrg = await authApi.getCurrentOrganization().catch(() => null);
         if (cancelled) return;
-        applySession(currentUser, organization ? { ...organization, orgRole: currentUser.systemRole === 'PLATFORM_ADMIN' ? 'OWNER' : 'VIEWER' } : null);
+        applySession(
+          currentUser,
+          currentOrg ? { ...currentOrg, orgRole: currentUser.systemRole } : null
+        );
       } catch {
-        if (!cancelled) resetSession();
+        if (!cancelled) {
+          resetSession();
+        }
       } finally {
-        if (!cancelled) setIsLoading(false);
+        if (!cancelled) {
+          setIsLoading(false);
+        }
       }
     };
+
     loadSession();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [applySession, resetSession]);
 
   const login = useCallback(async (email: string, password: string, remember = false) => {
     setIsLoading(true);
     try {
+      if (DEV_MOCK_AUTH) {
+        applySession({ ...MOCK_USER, email }, MOCK_ORG);
+        return;
+      }
       const hashedPassword = await hashPassword(password, email);
       const response: LoginResponse = await authApi.login({ email, password: hashedPassword, remember });
+
+      localStorage.removeItem(STORAGE_KEYS.LEGACY_AUTH_TOKENS);
       applySession(response.user, response.currentOrg ?? response.organizations[0] ?? null);
     } finally {
       setIsLoading(false);
@@ -108,14 +202,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [resetSession]);
 
   const updateProfile = useCallback(async (data: { name: string }): Promise<User> => {
-    if (!user) throw new LocalizedError('interface.notAuthenticated0c91ac');
+    if (!user) {
+      throw new LocalizedError("interface.notAuthenticated0c91ac", undefined, "Not authenticated");
+    }
+    if (DEV_MOCK_AUTH) {
+      const nextUser = { ...user, name: data.name, updatedAt: new Date().toISOString() };
+      setUser(nextUser);
+      persistDevAuthState(nextUser, organizations, currentOrg);
+      return nextUser;
+    }
     const nextUser = await authApi.updateProfile(data);
     setUser(nextUser);
+    persistDevAuthState(nextUser, organizations, currentOrg);
     return nextUser;
-  }, [user]);
+  }, [currentOrg, organizations, user]);
+
+  const deleteAccount = useCallback(async (email: string) => {
+    if (!user) {
+      throw new LocalizedError("interface.notAuthenticated0c91ac", undefined, "Not authenticated");
+    }
+    if (DEV_MOCK_AUTH) {
+      resetSession();
+      return;
+    }
+    await authApi.deleteAccount(email);
+    resetSession();
+  }, [resetSession, user]);
 
   const changePassword = useCallback(async (oldPassword: string, newPassword: string) => {
-    if (!user) throw new LocalizedError('interface.notAuthenticated0c91ac');
+    if (!user) {
+      throw new LocalizedError("interface.notAuthenticated0c91ac", undefined, "Not authenticated");
+    }
+    if (DEV_MOCK_AUTH) {
+      return;
+    }
     const [preparedOld, preparedNew] = await Promise.all([
       hashPassword(oldPassword, user.email),
       hashPassword(newPassword, user.email),
@@ -124,58 +244,59 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [user]);
 
   const switchOrganization = useCallback(async (orgId: string) => {
-    const org = organizations.find((item) => item.id === orgId);
-    if (org) setCurrentOrg(org);
+    const org = organizations.find(o => o.id === orgId);
+    if (org) {
+      if (DEV_MOCK_AUTH) {
+        localStorage.setItem(STORAGE_KEYS.CURRENT_ORG, JSON.stringify(org));
+      }
+      setCurrentOrg(org);
+    }
   }, [organizations]);
 
   const hasOrgRole = useCallback((role: OrgRole): boolean => {
-    return currentOrg?.orgRole === role;
-  }, [currentOrg]);
+    return user?.systemRole === role || currentOrg?.orgRole === role;
+  }, [currentOrg, user]);
 
   const hasAnyOrgRole = useCallback((...roles: OrgRole[]): boolean => {
-    return !!currentOrg && roles.includes(currentOrg.orgRole);
-  }, [currentOrg]);
+    return roles.some((role) => user?.systemRole === role || currentOrg?.orgRole === role);
+  }, [currentOrg, user]);
 
   const isPlatformAdmin = useCallback((): boolean => {
-    return user?.systemRole === 'PLATFORM_ADMIN' || user?.systemRole === 'SUPER_ADMIN';
+    return user?.systemRole === 'PLATFORM_ADMIN';
   }, [user]);
 
   const isSuperAdmin = isPlatformAdmin;
   const hasPermission = useCallback((permission: BusinessPermission) => userHasPermission(user, permission, getRuntimeBackendFlavor()), [user]);
-
   const refreshSession = useCallback(async () => {
-    if (!user) return;
-    try {
-      setUser(await authApi.getCurrentUser());
-    } catch {
-      setUser((previous) => previous ? { ...previous, permissions: [] } : previous);
-    }
+    if (!user || DEV_MOCK_AUTH) return;
+    try { setUser(await authApi.getCurrentUser()); }
+    catch { setUser(previous => previous ? { ...previous, permissions: [] } : previous); }
   }, [user]);
-
   useEffect(() => {
     const refresh = () => { void refreshSession(); };
     window.addEventListener('focus', refresh);
     window.addEventListener('schema:permissions-changed', refresh);
-    return () => {
-      window.removeEventListener('focus', refresh);
-      window.removeEventListener('schema:permissions-changed', refresh);
-    };
+    return () => { window.removeEventListener('focus', refresh); window.removeEventListener('schema:permissions-changed', refresh); };
   }, [refreshSession]);
 
+
+  // Listen for auth-expired event from api.ts refresh failure.
   useEffect(() => {
     const handleAuthExpired = () => {
       resetSession();
-      if (typeof window === 'undefined' || isPublicAuthPath(window.location.pathname)) return;
-      const next = `${window.location.pathname}${window.location.search}`;
-      window.location.href = `/login?next=${encodeURIComponent(next)}`;
+      if (typeof window === 'undefined') return;
+      // On public auth pages, clear local state only. Assigning location.href
+      // to /login while already there causes a full reload → infinite loop when
+      // session probes still get 401 (e.g. cold visit with no cookies).
+      if (isPublicAuthPath(window.location.pathname)) return;
+      window.location.href = loginRedirectForCurrentPath();
     };
     window.addEventListener('schema:auth-expired', handleAuthExpired);
     return () => window.removeEventListener('schema:auth-expired', handleAuthExpired);
   }, [resetSession]);
 
   const value: AuthContextType = {
-    hasPermission,
-    refreshSession,
+    hasPermission, refreshSession,
     user,
     organizations,
     currentOrg,
@@ -185,6 +306,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     logout,
     updateProfile,
     changePassword,
+    deleteAccount,
     switchOrganization,
     hasOrgRole,
     hasAnyOrgRole,
@@ -201,6 +323,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (context === undefined) throw new Error('useAuth must be used within an AuthProvider');
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
   return context;
 }

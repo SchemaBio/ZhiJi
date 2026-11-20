@@ -1,0 +1,49 @@
+import { LocalizedError } from '@/i18n/errors';
+import { api } from '@/lib/api';
+import type { HistoryTask, HistoryType, FocusRow } from './history-engine';
+
+export interface HistorySync {
+  scope: string; cursor: string; watermark: number; complete: boolean;
+  rows: FocusRow[]; tasks: Record<string, HistoryTask>;
+}
+export function syncFocuses(table: HistoryType, cursor: string, watermark: number | undefined, signal: AbortSignal) {
+  return api.get<HistorySync>('/v1/history/sync', { params: { table, cursor, ...(watermark === undefined ? {} : { watermark: String(watermark) }) }, signal });
+}
+export interface HistoryAudit {
+  id: string; actor: string; createdAt: string; reason: string;
+  before: Record<string, unknown>; after: Record<string, unknown>;
+}
+export function focusDetail(id: string, signal: AbortSignal) {
+  return api.get<{ row: FocusRow; events: HistoryAudit[] }>(`/v1/history/focuses/${encodeURIComponent(id)}`, { signal });
+}
+
+export class HistoryWorkerClient {
+  private worker: Worker;
+  private sequence = 0;
+  private failure: Error | null = null;
+  private requests = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  constructor() {
+    this.worker = new Worker(new URL('./history.worker.ts', import.meta.url), { type: 'module' });
+    this.worker.onmessage = (event: MessageEvent<{ id: number; result: unknown; error?: string; errorKey?: string }>) => {
+      const request = this.requests.get(event.data.id); if (!request) return;
+      clearTimeout(request.timer); this.requests.delete(event.data.id);
+      if (event.data.error) request.reject(event.data.errorKey ? new LocalizedError(event.data.errorKey) : new Error(event.data.error)); else request.resolve(event.data.result);
+    };
+    this.worker.onerror = () => this.fail(new LocalizedError("display.browserStatisticsFailedToLoadRefreshThe986a37"));
+  }
+  private fail(error: Error) {
+    this.failure = error;
+    for (const request of this.requests.values()) { clearTimeout(request.timer); request.reject(error); }
+    this.requests.clear();
+  }
+  call<T>(message: Record<string, unknown>): Promise<T> {
+    if (this.failure) return Promise.reject(this.failure);
+    const id = ++this.sequence;
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => { this.requests.delete(id); reject(new LocalizedError("display.browserStatisticsTimedOutSynchronizeAgain10233e")); }, 30000);
+      this.requests.set(id, { resolve: value => resolve(value as T), reject, timer });
+      this.worker.postMessage({ ...message, id });
+    });
+  }
+  dispose() { this.worker.terminate(); this.fail(new LocalizedError("display.historyPageClosed616cf7")); }
+}

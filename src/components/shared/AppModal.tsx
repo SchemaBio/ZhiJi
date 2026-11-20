@@ -1,0 +1,236 @@
+'use client';
+import { errorText } from '@/i18n/errors';
+
+import { useText } from '@/i18n/useText';
+import { translateUI } from '@/i18n/text';
+
+import { ActionButton as Button } from '@/components/shared/ActionButton';
+
+
+import * as React from 'react';
+import { Modal, ModalHeader, ModalBody, ModalFooter } from '@schema/ui-kit';
+import type { ModalSize } from '@schema/ui-kit';
+import { cn } from '@/lib/utils';
+
+export interface AppModalProps {
+  /** Whether the modal is open */
+  open: boolean;
+  /** Callback when open state changes */
+  onOpenChange: (open: boolean) => void;
+  /** Modal title */
+  title: string;
+  /** Modal size variant */
+  size?: ModalSize;
+  /** Whether to show the close button */
+  showCloseButton?: boolean;
+  /** Whether clicking the overlay closes the modal */
+  closeOnOverlayClick?: boolean;
+  /** Whether pressing Escape closes the modal */
+  closeOnEscape?: boolean;
+  /** Modal content */
+  children: React.ReactNode;
+  /** Optional footer content */
+  footer?: React.ReactNode;
+  /** Additional CSS classes for the modal content */
+  className?: string;
+  bodyClassName?: string;
+  /** Controls placed immediately before the close button. */
+  headerActions?: React.ReactNode;
+}
+
+interface ModalSectionHeadingProps {
+  icon: React.ReactNode;
+  title: string;
+  description?: string;
+}
+
+export function ModalSectionHeading({ icon, title, description }: ModalSectionHeadingProps) {
+  return (
+    <div className="mb-4 flex items-start gap-3">
+      <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[var(--yj-panel-subtle)] text-accent-fg">
+        {icon}
+      </span>
+      <div className="min-w-0">
+        <h3 className="text-sm font-semibold text-fg-default">{title}</h3>
+        {description && <p className="mt-0.5 text-xs leading-5 text-fg-muted">{description}</p>}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Unified modal wrapper component for the ZhiJi application.
+ * Wraps @schema/ui-kit's Modal with consistent API and styling.
+ *
+ * @example
+ * <AppModal open={isOpen} onOpenChange={setIsOpen} title="新建样本">
+ *   <form>...</form>
+ * </AppModal>
+ *
+ * @example
+ * <AppModal
+ *   open={isOpen}
+ *   onOpenChange={setIsOpen}
+ *   title="编辑任务"
+ *   footer={<Button onClick={onSave}>保存</Button>}
+ * >
+ *   <div>Content here</div>
+ * </AppModal>
+ */
+export function AppModal({
+  open,
+  onOpenChange,
+  title,
+  size = 'medium',
+  showCloseButton = true,
+  closeOnOverlayClick = true,
+  closeOnEscape = true,
+  children,
+  footer,
+  className,
+  bodyClassName,
+  headerActions,
+}: AppModalProps) {
+  const t = useText();
+  return (
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      size={size}
+      closeOnOverlayClick={closeOnOverlayClick}
+      closeOnEscape={closeOnEscape}
+      className={cn(
+        'yj-app-modal !fixed !bottom-auto !left-1/2 !right-auto !top-1/2 !m-0 !max-h-[calc(100vh-2rem)] max-sm:!max-w-[calc(100vw-2rem)] !-translate-x-1/2 !-translate-y-1/2 rounded-md border border-[var(--yj-border-subtle)] shadow-[var(--yj-shadow-raised)]',
+        className
+      )}
+    >
+      <ModalHeader showCloseButton={false} className={headerActions ? "shrink-0 pr-28" : "shrink-0 pr-16"}>
+        {title}
+      </ModalHeader>
+      {(showCloseButton || headerActions) && <div className="absolute right-4 top-4 flex items-center gap-1">{headerActions}{showCloseButton && <Button action="close" iconOnly aria-label={t("common.closeDialog81f18d")} variant="ghost" onClick={() => onOpenChange(false)} />}</div>}
+      <ModalBody className={bodyClassName}>
+        {children}
+      </ModalBody>
+      {footer && (
+        <ModalFooter className="flex-wrap [&_button]:shrink-0 [&_button]:whitespace-nowrap">
+          {footer}
+        </ModalFooter>
+      )}
+    </Modal>
+  );
+}
+
+interface ConfirmDialogProps {
+  /** Whether the dialog is open */
+  open: boolean;
+  /** Callback when open state changes */
+  onOpenChange: (open: boolean) => void;
+  /** Dialog title */
+  title: string;
+  /** Dialog message */
+  message: string;
+  /** Confirm button label */
+  confirmLabel?: string;
+  /** Cancel button label */
+  cancelLabel?: string;
+  /** Callback when user confirms */
+  onConfirm: () => void | Promise<void>;
+  /** Visual variant */
+  variant?: 'danger' | 'warning' | 'info';
+}
+
+/**
+ * Confirmation dialog component.
+ * Pre-built pattern for common confirmation use cases.
+ *
+ * @example
+ * <ConfirmDialog
+ *   open={showConfirm}
+ *   onOpenChange={setShowConfirm}
+ *   title="确认删除"
+ *   message="确定要删除这条记录吗？此操作不可撤销。"
+ *   variant="danger"
+ *   onConfirm={handleDelete}
+ * />
+ */
+export function ConfirmDialog({
+  open,
+  onOpenChange,
+  title,
+  message,
+  confirmLabel: suppliedConfirmLabel,
+  cancelLabel: suppliedCancelLabel,
+  onConfirm,
+  variant = 'info',
+}: ConfirmDialogProps) {
+  const t = useText();
+  const cancelLabel = suppliedCancelLabel ?? t("admin.cancel4d0b46");
+  const confirmLabel = suppliedConfirmLabel ?? t("samples.confirmb56d9a");
+  const [pending, setPending] = React.useState(false);
+  const [error, setError] = React.useState('');
+
+  React.useEffect(() => {
+    if (!open) {
+      setPending(false);
+      setError('');
+    }
+  }, [open]);
+
+  const handleConfirm = async () => {
+    if (pending) return;
+    setPending(true);
+    setError('');
+    try {
+      await onConfirm();
+      onOpenChange(false);
+    } catch (err) {
+      setError(err instanceof Error ? errorText(err, t) : t("common.operationFailedRetryLater891d39"));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const buttonVariant = variant === 'danger' ? 'danger' : 'primary';
+
+  return (
+    <AppModal
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (pending && !nextOpen) return;
+        onOpenChange(nextOpen);
+      }}
+      title={translateUI(title, t)}
+      size="small"
+      footer={
+        <>
+          <Button
+            variant="secondary"
+            disabled={pending}
+            onClick={() => onOpenChange(false)}
+          >
+            {cancelLabel}
+          </Button>
+          <Button
+            action={variant === 'danger' && /删除/.test(confirmLabel) ? 'delete' : undefined}
+            loading={pending}
+            loadingLabel={t("samples.processingdde1db")}
+            variant={buttonVariant}
+            disabled={pending}
+            onClick={handleConfirm}
+          >
+            {confirmLabel}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <p className="text-sm text-fg-default">{message}</p>
+        {error && (
+          <div className="rounded-md border border-danger-muted bg-danger-subtle px-3 py-2 text-sm text-danger-fg">
+            {error}
+          </div>
+        )}
+      </div>
+    </AppModal>
+  );
+}

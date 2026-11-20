@@ -1,0 +1,218 @@
+'use client';
+import { errorText } from '@/i18n/errors';
+
+import { useText } from '@/i18n/useText';
+import { localizeDisplay } from '@/i18n/text';
+
+import { ActionButton as Button } from '@/components/shared/ActionButton';
+
+
+import * as React from 'react';
+import { Input, Select } from '@schema/ui-kit';
+import { Activity, Network, UserRound } from 'lucide-react';
+import { AppModal, ModalSectionHeading } from '@/components/shared';
+import type { RelationType, AffectedStatus, PedigreeMember } from '../types';
+import type { Gender } from '../../types';
+import { RELATION_CONFIG, AFFECTED_STATUS_CONFIG } from '../types';
+
+interface AddMemberModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSubmit: (member: Omit<PedigreeMember, 'id' | 'generation' | 'position'>) => void | Promise<void>;
+  existingMembers: PedigreeMember[];
+  // 预填充提示（从上下文菜单传入）
+  defaultFatherId?: string;
+  defaultMotherId?: string;
+  defaultRelation?: RelationType;
+  defaultSpouseId?: string;
+}
+
+const genderOptions = [
+  { value: 'male', label: '男' },
+  { value: 'female', label: '女' },
+  { value: 'unknown', label: '未知' },
+];
+
+const relationOptions = Object.entries(RELATION_CONFIG)
+  .filter(([key]) => key !== 'proband')
+  .map(([value, config]) => ({ value, label: config.label }));
+
+const affectedOptions = Object.entries(AFFECTED_STATUS_CONFIG)
+  .map(([value, config]) => ({ value, label: config.label }));
+
+// 用于表示"无/未知"的特殊值（Radix Select 不允许空字符串作为 value）
+const NONE_VALUE = '__none__';
+
+export function AddMemberModal({ isOpen, onClose, onSubmit, existingMembers, defaultFatherId, defaultMotherId, defaultRelation, defaultSpouseId }: AddMemberModalProps) {
+  const t = useText();
+  const [submitting, setSubmitting] = React.useState(false);
+  const [submitError, setSubmitError] = React.useState('');
+  const [formData, setFormData] = React.useState({
+    name: '',
+    gender: 'unknown' as Gender,
+    birthYear: '',
+    relation: 'sibling' as RelationType,
+    affectedStatus: 'unknown' as AffectedStatus,
+    fatherId: NONE_VALUE,
+    motherId: NONE_VALUE,
+    phenotypes: '',
+  });
+
+  // 从预填充提示初始化表单
+  React.useEffect(() => {
+    if (isOpen) {
+      setSubmitError('');
+      setFormData({
+        name: '',
+        gender: 'unknown',
+        birthYear: '',
+        relation: defaultRelation || 'sibling',
+        affectedStatus: 'unknown',
+        fatherId: defaultFatherId || NONE_VALUE,
+        motherId: defaultMotherId || NONE_VALUE,
+        phenotypes: '',
+      });
+    }
+  }, [isOpen, defaultFatherId, defaultMotherId, defaultRelation]);
+
+  const handleChange = (field: string, value: string) => {
+    setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleSubmit = async (e: React.FormEvent | React.MouseEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
+    setSubmitError('');
+    try {
+      await onSubmit({
+        name: formData.name,
+        gender: formData.gender,
+        birthYear: formData.birthYear ? parseInt(formData.birthYear) : undefined,
+        relation: formData.relation,
+        affectedStatus: formData.affectedStatus,
+        fatherId: formData.fatherId === NONE_VALUE ? undefined : formData.fatherId,
+        motherId: formData.motherId === NONE_VALUE ? undefined : formData.motherId,
+        phenotypes: formData.phenotypes ? formData.phenotypes.split(',').map(s => s.trim()) : undefined,
+        spouseIds: defaultSpouseId ? [defaultSpouseId] : undefined,
+      });
+      onClose();
+      setFormData({
+        name: '',
+        gender: 'unknown',
+        birthYear: '',
+        relation: 'sibling',
+        affectedStatus: 'unknown',
+        fatherId: NONE_VALUE,
+        motherId: NONE_VALUE,
+        phenotypes: '',
+      });
+    } catch (err) {
+      setSubmitError(err instanceof Error ? errorText(err, t) : t("interface.failedToAddPedigreeMember72dac0"));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const maleMembers = existingMembers.filter(m => m.gender === 'male');
+  const femaleMembers = existingMembers.filter(m => m.gender === 'female');
+
+  const fatherOptions = [
+    { value: NONE_VALUE, label: t("samples.noneUnknowndfe4f4") },
+    ...maleMembers.map(m => ({ value: m.id, label: m.name })),
+  ];
+
+  const motherOptions = [
+    { value: NONE_VALUE, label: t("samples.noneUnknowndfe4f4") },
+    ...femaleMembers.map(m => ({ value: m.id, label: m.name })),
+  ];
+
+  if (!isOpen) return null;
+
+  return (
+    <AppModal
+      open={isOpen}
+      onOpenChange={(open) => !open && !submitting && onClose()}
+      title={t("samples.addPedigreeMember03b659")}
+      size="medium"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={submitting}>{t("admin.cancel4d0b46")}</Button>
+          <Button loading={submitting} loadingLabel={t("pipeline.addingfd2f5a")} action="add"
+            variant="primary"
+            onClick={(e: React.MouseEvent) => handleSubmit(e)}
+            disabled={submitting || !formData.name}
+
+          >
+            {t("samples.addMemberbd09d5")}</Button>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-6">
+        {submitError && (
+          <div className="rounded-md border border-danger-muted bg-danger-subtle px-3 py-2 text-sm text-danger-fg">
+            {submitError}
+          </div>
+        )}
+        <section>
+          <ModalSectionHeading
+            icon={<UserRound className="h-4 w-4" />}
+            title={t("samples.memberInformation0d33c3")}
+          />
+          <div className="space-y-4">
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-fg-muted">{t("samples.name2b9e1a")}</label>
+          <Input value={formData.name} onChange={(e) => handleChange('name', e.target.value)} placeholder={t("samples.enterName675b3e")} required />
+        </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-fg-muted">{t("samples.sex42b5cc")}</label>
+            <Select value={formData.gender} onChange={(value) => handleChange('gender', Array.isArray(value) ? value[0] : value)} options={localizeDisplay(genderOptions, t)} />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-fg-muted">{t("samples.birthYear72da00")}</label>
+            <Input type="number" value={formData.birthYear} onChange={(e) => handleChange('birthYear', e.target.value)} placeholder={t("samples.forExampleb1ea60")} />
+          </div>
+        </div>
+          </div>
+        </section>
+        <section className="border-t border-[var(--yj-border-subtle)] pt-5">
+          <ModalSectionHeading
+            icon={<Network className="h-4 w-4" />}
+            title={t("samples.pedigreeRelationships9c5661")}
+          />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-fg-muted">{t("samples.relationshipToProbanda3aea6")}</label>
+            <Select value={formData.relation} onChange={(value) => handleChange('relation', Array.isArray(value) ? value[0] : value)} options={localizeDisplay(relationOptions, t)} />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-fg-muted">{t("samples.affectedStatus5332fa")}</label>
+            <Select value={formData.affectedStatus} onChange={(value) => handleChange('affectedStatus', Array.isArray(value) ? value[0] : value)} options={localizeDisplay(affectedOptions, t)} />
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-fg-muted">{t("samples.father03cd61")}</label>
+            <Select value={formData.fatherId} onChange={(value) => handleChange('fatherId', Array.isArray(value) ? value[0] : value)} options={fatherOptions} />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-fg-muted">{t("samples.mother166846")}</label>
+            <Select value={formData.motherId} onChange={(value) => handleChange('motherId', Array.isArray(value) ? value[0] : value)} options={motherOptions} />
+          </div>
+        </div>
+        </section>
+        <section className="border-t border-[var(--yj-border-subtle)] pt-5">
+          <ModalSectionHeading
+            icon={<Activity className="h-4 w-4" />}
+            title={t("samples.phenotypeInformationcae6f2")}
+          />
+        <div>
+          <label className="mb-1.5 block text-xs font-medium text-fg-muted">{t("samples.phenotypeDescriptionfa80fb")}</label>
+          <Input value={formData.phenotypes} onChange={(e) => handleChange('phenotypes', e.target.value)} placeholder={t("samples.separatePhenotypesWithCommase4c276")} />
+        </div>
+        </section>
+      </form>
+    </AppModal>
+  );
+}

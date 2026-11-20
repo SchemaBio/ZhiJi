@@ -1,0 +1,101 @@
+# Assessment optimization implementation status — 2026-10-28
+
+This is a progress report, not full acceptance of the optimization plan.
+
+## Updated performance acceptance — 2026-10-28
+
+The user accepted the measured 51%/76% cold full-time p95 reductions at 50k/100k
+as satisfying this delivery's performance requirement and requested no further
+work merely to chase the original hot-cache target. The uncommitted cache-probe
+exploration was removed; all committed implementations and baseline reports remain.
+Original timing misses and memory limitations remain visible as historical evidence,
+not claims of passing those individual gates. No default flag, push or production
+deployment was changed. Independent AI quality/clinical-review validation is still
+separate from the accepted performance result.
+
+## AI validation handoff — 2026-10-28
+
+The user requested continued AI validation, set a total paid-model budget of
+CNY 5, and proposed existing task ClinVar annotations in place of unavailable
+independent professional labels. The read-only data-quality investigation and
+offline evaluator were committed in SepiLens `e48d751`; see the sibling repository's
+`docs/AI_QUALITY_CLINVAR_READINESS_2026-10-28.md` for aggregate evidence.
+
+That investigation found no assembly or ClinVar release metadata in the inspected
+Parquet cache, no usable CNV classification labels, and no independent SVC labels.
+The SNV candidates are strongly imbalanced, with only three pathogenic/likely
+pathogenic coordinate keys before assembly verification. None is yet an accepted
+reference label. ClinVar aggregate agreement cannot establish clause-level truth
+or replace the plan's independently reviewed clinical acceptance.
+
+The user chose **not to query further task metadata and to receive the data-quality
+report first**. Further remote queries and paid model calls were therefore left
+unexecuted at this handoff. Provider spending remains CNY 0/5. The unfinished isolated executor draft
+was removed, and the committed offline evaluator/reservation-ledger tests passed
+all 19 cases. There is no completed live model comparison or clinical-accuracy
+improvement claim. Full AI acceptance remains blocked by unavailable qualified
+labels and unverified task/reference provenance; the performance acceptance above
+does not waive those requirements. Resume this validation only with suitable
+reference data and an explicit decision to continue the necessary data checks.
+
+## Implemented
+
+- `NEXT_PUBLIC_ASSESSMENT_OPTIMIZED=true` opts into the browser path (default off). Authorized context is checked before cache reuse. The new cache namespace retains the full context/proof/rule fingerprint and replaces loaded CNV reference content with the pinned manifest digest.
+- A cache hit skips CNV download/parse. Successfully verified public reference packs are reused by digest. Failed/degraded evaluations remain excluded from completed caches.
+- The client uses an ordered, bounded two-batch preparation pipeline. Gene reference queries overlap worker computation; display-only ranking is detached. Preparation failures are immediately observed, and cancellation stops queued consumption.
+- CNV containment, imprinting overlap, STR exact matching and CNV reference-gene overlap use reusable indexes. Reference ordering and half-open interval boundaries are preserved.
+- Opt-in timing events contain context, cache, CNV/gene reference, read/preparation, worker evaluation/finalization/transfer, first-readable and total durations. They also emit on failure/cancellation and contain no row identifiers or clinical values. Nested durations are inclusive, not additive. Browser Parquet download/materialization timings are included in the first real-browser [comparison report](benchmarks/2026-10-28/README.md).
+- Worker batches expose at most 20 recent read-only row previews through the result toolbar before global candidate selection completes. These previews exclude pin/rank fields, are never cached or saved as completed assessments, and disappear on cancellation/failure/completion. The main Parquet table continues to wait for the final baseline; previews are a separate readable surface.
+- Loligo attaches a versioned identity/annotation/sample/family fact pack, preserving zero versus unknown, raw GT/AD/VAF and available DP/GQ. Each fact retains a request JSON pointer and explicitly unversioned source; incompatible engine prerequisites remain not applicable, and unconfirmed family premises remain unknown.
+- SepiLens reconstructs the optional fact pack from its normalized request and reports absent/matched/mismatched/unsupported-version input. Forged confirmation/provenance is ignored. Fixed-object gene/transcript/consequence conflicts remain visible. Four-engine wire fixtures are checked on both services after normalization.
+- `SEPILENS_AI_EVIDENCE_CHAIN_ENABLED=true` (default off) supplies evidence policy and independently established baseline facts with aliased sources. It emits criterion-level support audits across the four assessment engines. Rebuilt facts are retained in the existing encrypted agent audit; quality summaries expose only schema/coherence states. Prompt metadata identifies this opt-in path.
+- Support audits require an independently established baseline, matching references, verified source/object/material, matching scores/strengths, and independently established facts. Duplicate proposal clauses cannot be labeled supported.
+- ZhiJi displays supported, pending, insufficient and conflicting criterion states in four languages.
+- The opt-in model schema now requires per-criterion evidence bindings. Exact source excerpts remain pending human review; only scoped, independently established structured facts can be supported. Wrong IDs/scopes, uncited/rejected sources and invented excerpts share the existing single correction budget with schema/truncation recovery; unresolved positive clauses alone are projected to insufficient data. Original outputs and fixed review diagnostics remain in the encrypted audit.
+- The shared read-only UI exposes binding origin, fact ID, source title/version, excerpt and fixed review reasons. Historical/unknown versions explicitly lack recorded bindings. CNV defaults remain visible; manual edits and automatic fill behavior are preserved. Unsafe or credential-bearing citation links are not clickable.
+- Directed retrieval advances at most three engine-scoped questions within the existing HTTP/deadline budget. Known conflicts take priority; one supported clause does not suppress other unresolved clauses. Request-local caching prevents repeated queries. No-record, unqueried and unavailable states remain distinct from negative clinical evidence.
+- Publication identities group PMID/DOI/ClinVar records without merging trust flags or losing distinct snippets/citation IDs. Only independently verified object/material conflict holds structured support from the same publication. CNV duplicate case IDs are rejected within a selection as well as across selections; private case IDs are excluded from retrieval model views.
+- The four-language read-only panel displays retrieval findings, source conflicts and remaining questions. Docker build arguments and SaaS/self-hosted Compose configuration expose independent browser/AI opt-ins, both default off. Changing the browser flag requires an image rebuild; enabling AI transport requires the updated receiver first.
+- The receiver builds a bounded `structured-inputs-v1` view from existing normalized ACMG mechanism/GenCC, CNV dosage and SVC method fields. Source versions and original paths remain traceable; input source confirmation cannot establish clause applicability. Direction-specific CNV overlap reuses the existing annotator. Pointer zero/false survives; ambiguous non-pointer defaults remain unknown. A 256-field limit reports omissions explicitly. Nested source IDs and provenance IDs use opaque aliases, and patient/family IDs are not repeated in this view.
+
+## Validation performed
+
+- Optimized browser assessment suite: 131 passed, 2 skipped (optional reference/performance fixtures). TypeScript check passed.
+- Default-path suite before final added cases: 130 passed, 2 optional fixture skips.
+- SepiLens API, assessment and config suites passed with local synthetic HTTP services. Includes a 120-case engineering replay matrix (30 parameterized cases per engine); this is not 120 independent clinical cases or a model-accuracy evaluation.
+- Loligo assistance suite passed, including zero/missing fact tests.
+- HTTP proxy variables were cleared only in test processes to permit localhost synthetic service connections.
+- Explicit large parity run (`ASSESSMENT_LARGE_PARITY=true pnpm exec vitest run src/lib/assessment/optimization-parity.test.ts`) passed 1k/10k/50k/100k mixed-row cases. Each case compares every final row assessment and reference-gene ordering between old and optimized paths. Total test runtime was 89.74 s; individual 50k/100k cases took 17.35/71.53 s including both paths and deep equality checks. These are Node/jsdom regression timings, not browser performance targets or p50/p95 measurements.
+- A production-built isolated browser harness imported the real BrowserTable, DuckDB/WASM, Arrow stream and assessment Worker. Synthetic immutable API/object/reference fixtures covered 10k/50k/100k rows. Sixty normal cold/hot runs (five per group/path) preserved exact full assessment and sorted-first-page digests. Another 36 latency/failure/cancel runs passed 18 paired scenario checks, including degraded-cache exclusion and zero automatic results after cancellation. Raw reports and nearest-rank p50/p95 are retained under `docs/benchmarks/2026-10-28`.
+- Cold full p95 fell 51%/76% at 50k/100k, but only 6.6% at 10k. Hot full p95 was essentially unchanged and failed the 50% target. Initial readable cold rows improved 52%/80%/90%, a separate measure. Whole-page/Worker peak memory is not proven by the implementation-dependent sampled heap counter; a 50k heap-counter increase is retained as a regression signal. No acceptance gate was relaxed.
+
+## Remaining before the original plan is complete
+
+- Performance follow-ups are recorded rather than required for this accepted delivery: original hot-cache/10k targets, defensible whole-page plus Worker memory measurement, the 50k heap-counter signal, and real network bandwidth/loss profiles. The measured hot stages and limitations remain in the benchmark report. Further optimization was stopped at the user's request.
+- Real-browser verification of the provisional row preview surface and its withdrawal behavior. The main Parquet table intentionally publishes only the completed baseline; provisional previews have no mutation controls.
+- Validate real-world coverage of original structured method/dosage inputs. Receiver extraction and context-only field bindings are implemented; Loligo currently forwards imported annotations without fabricating trusted dosage/method records, so absent curated material remains unknown. Production input coverage and source-policy validation must be assessed before enabling the path.
+- Independent clinically reviewed labels and fixed-model quality comparison, including false acceptance, support, omission, conflict and useful coverage metrics. No paid provider calls were made.
+- Real-browser verification for the implemented per-source reasons/defaults/historical-metadata UI. Both default-off and optimization-enabled production builds passed locally; Docker/Linux build verification remains outstanding.
+
+## Functional commits
+
+- ZhiJi `83313bf`: opt-in caching, ordered pipeline, reference indexes, HPO/ROH reuse, and 1k/10k mixed-row parity tests.
+- ZhiJi `28e121d`: reference preparation/computation overlap and nonblocking display ranking.
+- ZhiJi `13b1eec`: bounded provisional row previews and multilingual evidence-support display.
+- Loligo `684f49d`: versioned request fact packs and sanitized role quality fields; `eb424c8`: wire-fixture comparison independent of checkout line endings.
+- SepiLens `c47652b`: canonical fact reconstruction, unknown-engine rejection, independently supported baseline facts, encrypted audit and opt-in evidence-quality metadata. The full `go test ./...` suite passed after these changes, including four-engine feature-on/off HTTP contracts and unchanged model-call/billing assertions.
+- ZhiJi `5a5e7ba`: explicit role quality-field forwarding with missing parents left unknown. Related tests and TypeScript checks passed.
+- Loligo `f227d8f`: server-controlled fact transport defaults off to preserve compatibility with old strict receivers; browser JSON cannot enable it, and managed runtimes map the flag to the child process. Stored payloads are not rewritten.
+- SepiLens `6e8512a`: scoped fact/excerpt bindings, single-budget correction, selective projection, original-output audit, and four-engine HTTP tests for corrected and repeatedly invalid outputs. Full backend tests passed; synthetic provider calls remain bounded.
+- ZhiJi `b055574`: shared multilingual provenance/review panel, explicit historical missing metadata and source-link filtering. Six new panel tests, existing AI action/card and CNV automatic-fill/manual-review regressions, language-key parity and TypeScript checks passed.
+- Optimized suite after scheduling changes: 136 passed, 2 optional fixture skips. Subsequent preview-specific worker/UI tests, 21 AI action/card tests, language key parity and TypeScript checks passed.
+- SepiLens `94065a8`: source identity preservation, conservative publication case metadata and duplicate CNV case protection.
+- SepiLens `f62663e`: engine-scoped missing-evidence retrieval, cache/budget/cancellation protection and independently verified source-conflict holds. Full `go test ./...` passed with synthetic local services.
+- ZhiJi `a3d66d2`: four-language retrieval findings and source-conflict presentation. Seven panel tests, ten language tests and TypeScript checks passed.
+- ZhiJi `26c6584`, Loligo `1ce0188`, Onykia `b93821a`: default-off build/runtime opt-ins and deployment examples. SaaS/local Compose syntax checks passed; the self-hosted SepiLens overlay was validated with a synthetic Loligo image declaration and synthetic secret paths, matching its generated-base requirement. No containers were started.
+- SepiLens `6aec124`: engine-specific structured field view, original-field context bindings, strict source provenance separation, bounded omissions and nested citation alias tests. Full backend tests passed before the alias-depth fix; the complete affected API/assessment suites passed after that fix and the prompt metadata update.
+- ZhiJi `416c33f`: four-language explanations for original-field applicability and omitted context. Eight panel tests, ten language tests and TypeScript checks passed.
+- ZhiJi `6fffe35`: isolated real-browser benchmark harness with deterministic eight-table synthetic Parquet fixtures and protected local report persistence. No new dependency was installed; it reuses the repository's locked Vitest/Vite toolchain.
+- ZhiJi `2941daf`: comparison/scenario gates reject incomplete or unbalanced runs, changed result/order digests, and attempts to treat unknown memory as acceptance. Five Python validator tests and TypeScript checks passed; delayed-result equivalence was subsequently tightened against normal runs as well.
+
+Neither new path is enabled by default. The overall plan remains in progress. No paid provider requests, push or production deployment have been performed. This report accompanies functional commits and explicitly records outstanding work; it is not a clinical-accuracy or performance-target acceptance report.

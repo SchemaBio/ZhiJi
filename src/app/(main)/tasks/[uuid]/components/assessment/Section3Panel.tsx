@@ -1,8 +1,15 @@
 'use client';
+import { formatNumericString } from '@/i18n/format';
+
+import { useText } from '@/i18n/useText';
+import { translateUI } from '@/i18n/text';
+
 
 import * as React from 'react';
 import { Tooltip } from '@schema/ui-kit';
 import { HelpCircle } from 'lucide-react';
+import { calculateSection3Gain } from '../../utils/gain-calculator';
+import { calculateSection3 } from '../../utils/loss-calculator';
 import type { Section3Criteria } from '../../types';
 
 interface Section3PanelProps {
@@ -22,52 +29,48 @@ const GENE_COUNT_SCORES = [
 ] as const;
 
 /**
- * 根据基因数量获取评分
- */
-function getScoreForGeneCount(count: number): number {
-  if (count === 0) return 0;
-  if (count >= 1 && count <= 24) return 0;
-  if (count >= 25 && count <= 34) return 0.45;
-  if (count >= 35) return 0.90;
-  return 0;
-}
-
-/**
  * Section 3: 基因数量评估面板
  */
 export function Section3Panel({ cnvType, criteria, onChange }: Section3PanelProps) {
-  const currentScore = getScoreForGeneCount(criteria.geneCount);
+  const t = useText();
+  const gain = cnvType === 'Amplification';
+  const ranges = gain ? [
+    { range: '0-34', min: 0, max: 34, score: 0, description: t("tasks.proteinCodingGenes5d9403") },
+    { range: '35-49', min: 35, max: 49, score: 0.45, description: t("tasks.proteinCodingGenes9f94c9") },
+    { range: '50+', min: 50, max: Infinity, score: 0.90, description: t("tasks.orMoreProteinCodingGenes5a6e4b") },
+  ] : GENE_COUNT_SCORES;
+  const currentScore = gain ? calculateSection3Gain(criteria) : calculateSection3(criteria);
 
   const handleGeneCountChange = (value: string) => {
-    const count = parseInt(value, 10);
-    if (!isNaN(count) && count >= 0) {
-      onChange({ geneCount: count });
+    if (value === '') { onChange({ geneCount: 0, confirmed: false }); return; }
+    const count = Number(value);
+    if (Number.isSafeInteger(count) && count >= 0) {
+      onChange({ geneCount: count, confirmed: true });
     }
   };
 
   return (
     <div className="space-y-4">
       <div className="text-xs text-fg-muted">
-        根据CNV中完全或部分包含的蛋白编码RefSeq基因数量进行评分。
-      </div>
+        {t("tasks.scoreByProteinCodingRefseqGenesFully3794bf")}</div>
 
       {/* 基因数量输入 */}
       <div className="flex items-center gap-4">
         <label htmlFor="gene-count" className="text-sm text-fg-default">
-          蛋白编码基因数量
-        </label>
+          {t("tasks.proteinCodingGeneCounta87fc0")}</label>
         <div className="flex items-center gap-2">
           <input
             type="number"
             id="gene-count"
             min={0}
-            value={criteria.geneCount}
+            value={criteria.confirmed === false && !criteria.defaulted ? '' : criteria.geneCount}
+            placeholder={t("tasks.awaitingConfirmation27b584")}
             onChange={(e) => handleGeneCountChange(e.target.value)}
             className="w-24 px-3 py-2 text-sm border border-border rounded-md bg-canvas-default focus:outline-none focus:ring-2 focus:ring-accent-emphasis"
           />
-          <Tooltip 
-            content="输入CNV区域内完全或部分包含的蛋白编码RefSeq基因数量" 
-            placement="right" 
+          <Tooltip
+            content={t("tasks.enterTheNumberOfProteinCodingRefseq7bf3ea")}
+            placement="right"
             variant="nav"
           >
             <HelpCircle className="w-4 h-4 text-fg-muted" />
@@ -80,18 +83,18 @@ export function Section3Panel({ cnvType, criteria, onChange }: Section3PanelProp
         <table className="w-full text-sm">
           <thead className="bg-canvas-subtle">
             <tr>
-              <th className="px-4 py-2 text-left text-fg-muted font-medium">基因数量范围</th>
-              <th className="px-4 py-2 text-right text-fg-muted font-medium">评分</th>
+              <th className="px-4 py-2 text-left text-fg-muted font-medium">{t("tasks.geneCountRange656c0d")}</th>
+              <th className="px-4 py-2 text-right text-fg-muted font-medium">{t("tasks.score2f5856")}</th>
             </tr>
           </thead>
           <tbody>
-            {GENE_COUNT_SCORES.map((item, index) => {
-              const isActive = 
-                (item.min === 0 && criteria.geneCount === 0) ||
-                (criteria.geneCount >= item.min && criteria.geneCount <= item.max);
-              
+            {ranges.map((item, index) => {
+              const isActive =
+                criteria.confirmed !== false && ((item.min === 0 && criteria.geneCount === 0) ||
+                (criteria.geneCount >= item.min && criteria.geneCount <= item.max));
+
               return (
-                <tr 
+                <tr
                   key={index}
                   className={`
                     border-t border-border
@@ -104,13 +107,13 @@ export function Section3Panel({ cnvType, criteria, onChange }: Section3PanelProp
                         <span className="w-2 h-2 rounded-full bg-accent-emphasis" />
                       )}
                       <span>{item.range}</span>
-                      <span className="text-xs text-fg-muted">({item.description})</span>
+                      <span className="text-xs text-fg-muted">({translateUI(item.description, t)})</span>
                     </div>
                   </td>
                   <td className={`px-4 py-2 text-right font-mono ${
                     item.score > 0 ? 'text-success-fg' : 'text-fg-muted'
                   }`}>
-                    {item.score > 0 ? '+' : ''}{item.score.toFixed(2)}
+                    {item.score > 0 ? '+' : ''}{formatNumericString(item.score.toFixed(2), t.locale)}
                   </td>
                 </tr>
               );
@@ -121,11 +124,11 @@ export function Section3Panel({ cnvType, criteria, onChange }: Section3PanelProp
 
       {/* 当前评分 */}
       <div className="flex items-center justify-between p-3 bg-canvas-subtle rounded-lg">
-        <span className="text-sm text-fg-muted">当前评分</span>
+        <span className="text-sm text-fg-muted">{t("tasks.currentScoredde04f")}</span>
         <span className={`text-lg font-mono font-bold ${
           currentScore > 0 ? 'text-success-fg' : 'text-fg-muted'
         }`}>
-          {currentScore > 0 ? '+' : ''}{currentScore.toFixed(2)}
+          {currentScore > 0 ? '+' : ''}{formatNumericString(currentScore.toFixed(2), t.locale)}
         </span>
       </div>
     </div>

@@ -1,147 +1,397 @@
+import type {TrioMember} from './sample-parents';
 import { api } from './api';
 import type {
   AnalysisTask,
   AnalysisTaskDetail,
-  TaskCreateRequest,
   TaskListResponse,
+  TaskCreateRequest,
+  TaskUpdateRequest,
+  TaskProgressResponse,
   TaskStatsResponse,
   TaskStatus,
-  TaskUpdateRequest,
 } from '@/types/task';
+import type { SampleDetail } from '@/app/(main)/samples/types';
+import { normalizeSampleDetail } from './samples';
 
-const TASK_STATUSES: TaskStatus[] = [
-  'waiting_for_data',
-  'queued',
-  'running',
-  'completed',
-  'failed',
-  'cancelled',
-  'pending_interpretation',
-];
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' ? value as Record<string, unknown> : {};
+interface RawTask {
+  origin?: string;
+ trio_members?:TrioMember[];
+ result_capabilities?: string[];
+  template?: string;
+  id?: string;
+  sampleId?: string;
+  sample_id?: string;
+  normal_sample_id?: string;
+  normal_sample_internal_id?: string;
+  internalId?: string;
+  internal_id?: string;
+  pipeline?: string;
+  pipelineId?: string;
+  pipeline_id?: string;
+  pipelineVersion?: string;
+  pipeline_version?: string;
+  status?: string;
+  vm_status?: string;
+  result_import_status?: string;
+  execution_phase?: string;
+  execution_reason_code?: string;
+  attempt_id?: string;
+  phase_updated_at?: string;
+  bootstrap_phase?: string;
+  bootstrap_last_heartbeat_at?: string;
+  diagnostic_hold_until?: string;
+  diagnostic_summary?: string;
+  vmStatus?: string;
+  dispatch_next_retry_at?: string;
+  dispatchNextRetryAt?: string;
+  dispatch_retry_deadline_at?: string;
+  dispatchRetryDeadlineAt?: string;
+  dispatch_retry_count?: number;
+  dispatchRetryCount?: number;
+  progress?: number;
+  expiresAt?: string;
+  expires_at?: string;
+  createdAt?: string;
+  created_at?: string;
+  createdBy?: string;
+  created_by?: string;
+  retryStartedAt?: string;
+  interpretationCompletedAt?: string;
+  interpretationCompletedBy?: string;
+  completedAt?: string;
+  completed_at?: string;
+  remark?: string;
+  name?: string;
 }
 
-function rawString(raw: Record<string, unknown>, ...keys: string[]): string {
-  for (const key of keys) {
-    const value = raw[key];
-    if (typeof value === 'string') return value;
-  }
-  return '';
+type MaybeTaskList = RawTask[] | TaskListResponse | {
+  items?: RawTask[];
+  data?: RawTask[] | {
+    items?: RawTask[];
+    total?: number;
+    page?: number;
+    page_size?: number;
+    pageSize?: number;
+    total_pages?: number;
+    totalPages?: number;
+  };
+  total?: number;
+  page?: number;
+  page_size?: number;
+  pageSize?: number;
+  total_pages?: number;
+  totalPages?: number;
+};
+
+function asRawTask(value: unknown): RawTask {
+  return value && typeof value === 'object' ? value as RawTask : {};
 }
 
 function normalizeStatus(value: unknown): TaskStatus {
-  return TASK_STATUSES.includes(value as TaskStatus) ? value as TaskStatus : 'queued';
+  const allowed: TaskStatus[] = [
+    'waiting_for_data',
+    'queued',
+    'running',
+    'completed',
+    'failed',
+    'cancelled',
+    'pending_interpretation',
+  ];
+  return allowed.includes(value as TaskStatus) ? value as TaskStatus : 'queued';
 }
 
-export function normalizeTask(value: unknown): AnalysisTask {
-  const raw = asRecord(value);
+export function normalizeTask(rawValue: unknown): AnalysisTask {
+  const raw = asRawTask(rawValue);
   return {
+    origin: typeof raw.origin === 'string' ? raw.origin : undefined,
+    trioMembers:raw.trio_members,
     id: String(raw.id ?? ''),
     name: typeof raw.name === 'string' ? raw.name : undefined,
-    sampleId: rawString(raw, 'sampleId', 'sample_id'),
-    internalId: rawString(raw, 'internalId', 'internal_id'),
+    sampleId: String(raw.sampleId ?? raw.sample_id ?? ''),
+    internalId: String(raw.internalId ?? raw.internal_id ?? ''),
     template: typeof raw.template === 'string' ? raw.template : undefined,
-    pipeline: rawString(raw, 'pipeline'),
-    pipelineVersion: rawString(raw, 'pipelineVersion', 'pipeline_version'),
+ resultCapabilities: raw.result_capabilities,
+    pipeline: String(raw.pipeline ?? ''),
+    pipelineId: raw.pipelineId ?? raw.pipeline_id,
+    pipelineVersion: String(raw.pipelineVersion ?? raw.pipeline_version ?? ''),
     status: normalizeStatus(raw.status),
-    vmStatus: rawString(raw, 'vmStatus', 'vm_status') || undefined,
-    resultImportStatus: rawString(raw, 'resultImportStatus', 'result_import_status') || undefined,
-    executionPhase: rawString(raw, 'executionPhase', 'execution_phase') || undefined,
-    executionReasonCode: rawString(raw, 'executionReasonCode', 'execution_reason_code') || undefined,
-    attemptId: rawString(raw, 'attemptId', 'attempt_id') || undefined,
+    vmStatus: raw.vmStatus ?? raw.vm_status,
+    resultImportStatus: raw.result_import_status,
+    executionPhase: raw.execution_phase,
+    executionReasonCode: raw.execution_reason_code,
+    attemptId: raw.attempt_id,
+    phaseUpdatedAt: raw.phase_updated_at,
+    bootstrapPhase: raw.bootstrap_phase,
+    bootstrapLastHeartbeatAt: raw.bootstrap_last_heartbeat_at,
+    diagnosticHoldUntil: raw.diagnostic_hold_until,
+    diagnosticSummary: raw.diagnostic_summary,
+    dispatchNextRetryAt: raw.dispatchNextRetryAt ?? raw.dispatch_next_retry_at,
+    dispatchRetryDeadlineAt: raw.dispatchRetryDeadlineAt ?? raw.dispatch_retry_deadline_at,
+    dispatchRetryCount: raw.dispatchRetryCount ?? raw.dispatch_retry_count,
     progress: typeof raw.progress === 'number' && Number.isFinite(raw.progress) ? raw.progress : 0,
-    createdAt: rawString(raw, 'createdAt', 'created_at'),
-    createdBy: rawString(raw, 'createdBy', 'created_by'),
-    retryStartedAt: rawString(raw, 'retryStartedAt', 'retry_started_at') || undefined,
-    interpretationCompletedAt: rawString(raw, 'interpretationCompletedAt', 'interpretation_completed_at') || undefined,
-    interpretationCompletedBy: rawString(raw, 'interpretationCompletedBy', 'interpretation_completed_by') || undefined,
-    completedAt: rawString(raw, 'completedAt', 'completed_at') || undefined,
-    remark: typeof raw.remark === 'string' ? raw.remark : undefined,
+    expiresAt: raw.expiresAt ?? raw.expires_at,
+    createdAt: String(raw.createdAt ?? raw.created_at ?? ''),
+    createdBy: String(raw.createdBy ?? raw.created_by ?? ''),
+    retryStartedAt: raw.retryStartedAt,
+    interpretationCompletedAt: raw.interpretationCompletedAt,
+    interpretationCompletedBy: raw.interpretationCompletedBy,
+    completedAt: raw.completedAt ?? raw.completed_at,
+    remark: raw.remark,
   };
 }
 
-function taskItems(value: unknown): unknown[] {
-  if (Array.isArray(value)) return value;
-  const payload = asRecord(value);
-  if (Array.isArray(payload.items)) return payload.items;
-  if (Array.isArray(payload.data)) return payload.data;
-  const nested = asRecord(payload.data);
-  return Array.isArray(nested.items) ? nested.items : [];
+export function normalizeTaskDetail(rawValue: unknown): AnalysisTaskDetail {
+  const raw = asRawTask(rawValue);
+  return {
+    normalSampleId: raw.normal_sample_id,
+    normalSampleInternalId: raw.normal_sample_internal_id,
+    trioMembers:raw.trio_members,
+    id: String(raw.id ?? ''),
+    name: String(raw.name ?? raw.id ?? ''),
+    sampleId: String(raw.sampleId ?? raw.sample_id ?? ''),
+    internalId: String(raw.internalId ?? raw.internal_id ?? ''),
+    template: typeof raw.template === 'string' ? raw.template : undefined,
+ resultCapabilities: raw.result_capabilities,
+    pipeline: String(raw.pipeline ?? ''),
+    pipelineId: raw.pipelineId ?? raw.pipeline_id,
+    pipelineVersion: String(raw.pipelineVersion ?? raw.pipeline_version ?? ''),
+    status: normalizeStatus(raw.status),
+    vmStatus: raw.vmStatus ?? raw.vm_status,
+    resultImportStatus: raw.result_import_status,
+    executionPhase: raw.execution_phase,
+    executionReasonCode: raw.execution_reason_code,
+    attemptId: raw.attempt_id,
+    phaseUpdatedAt: raw.phase_updated_at,
+    bootstrapPhase: raw.bootstrap_phase,
+    bootstrapLastHeartbeatAt: raw.bootstrap_last_heartbeat_at,
+    diagnosticHoldUntil: raw.diagnostic_hold_until,
+    diagnosticSummary: raw.diagnostic_summary,
+    dispatchNextRetryAt: raw.dispatchNextRetryAt ?? raw.dispatch_next_retry_at,
+    dispatchRetryDeadlineAt: raw.dispatchRetryDeadlineAt ?? raw.dispatch_retry_deadline_at,
+    dispatchRetryCount: raw.dispatchRetryCount ?? raw.dispatch_retry_count,
+    expiresAt: raw.expiresAt ?? raw.expires_at,
+    createdAt: String(raw.createdAt ?? raw.created_at ?? ''),
+    createdBy: String(raw.createdBy ?? raw.created_by ?? ''),
+    retryStartedAt: raw.retryStartedAt,
+    interpretationCompletedAt: raw.interpretationCompletedAt,
+    interpretationCompletedBy: raw.interpretationCompletedBy,
+    completedAt: raw.completedAt ?? raw.completed_at,
+  };
 }
 
-export function normalizeTaskListResponse(value: unknown, fallbackPage = 1, fallbackPageSize = 20): TaskListResponse {
-  const items = taskItems(value).map(normalizeTask).filter((task) => task.id);
-  const payload = asRecord(value);
-  const meta = asRecord(payload.data && !Array.isArray(payload.data) ? payload.data : payload);
+function taskItems(value: MaybeTaskList): RawTask[] {
+  if (Array.isArray(value)) return value.map(asRawTask);
+  const payload = value as { items?: unknown; data?: unknown };
+  if (Array.isArray(payload.items)) return payload.items.map(asRawTask);
+  if (Array.isArray(payload.data)) return payload.data.map(asRawTask);
+  const nested = payload.data && typeof payload.data === 'object' ? payload.data as { items?: unknown } : null;
+  if (Array.isArray(nested?.items)) {
+    return nested.items.map(asRawTask);
+  }
+  return [];
+}
+
+function listMeta(value: MaybeTaskList) {
+  const payload = value as { data?: unknown };
+  const nested = payload && typeof payload === 'object' && payload.data && !Array.isArray(payload.data)
+    ? payload.data
+    : payload;
+  return nested as {
+    total?: number;
+    page?: number;
+    page_size?: number;
+    pageSize?: number;
+    total_pages?: number;
+    totalPages?: number;
+  };
+}
+
+export function normalizeTaskListResponse(value: MaybeTaskList, fallbackPage = 1, fallbackPageSize = 20): TaskListResponse {
+  const items = taskItems(value).map(normalizeTask).filter(task => task.id);
+  const meta = listMeta(value);
   return {
     items,
-    total: typeof meta.total === 'number' ? meta.total : items.length,
-    page: typeof meta.page === 'number' ? meta.page : fallbackPage,
-    page_size: typeof meta.page_size === 'number' ? meta.page_size : fallbackPageSize,
-    total_pages: typeof meta.total_pages === 'number' ? meta.total_pages : 1,
+    total: meta.total ?? items.length,
+    page: meta.page ?? fallbackPage,
+    page_size: meta.page_size ?? meta.pageSize ?? fallbackPageSize,
+    total_pages: meta.total_pages ?? meta.totalPages ?? 1,
   };
+}
+
+export function normalizeTaskProgress(rawValue: unknown): TaskProgressResponse {
+  const raw = rawValue && typeof rawValue === 'object' ? rawValue as Record<string, unknown> : {};
+  return {
+    ...raw,
+    id: String(raw.id ?? ''),
+    uuid: String(raw.uuid ?? ''),
+    name: String(raw.name ?? ''),
+    template: String(raw.template ?? ''),
+    status: String(raw.status ?? ''),
+    progress: typeof raw.progress === 'number' && Number.isFinite(raw.progress) ? raw.progress : 0,
+    created_at: String(raw.created_at ?? raw.createdAt ?? ''),
+    execution_phase: typeof raw.execution_phase === 'string' ? raw.execution_phase : undefined,
+    execution_reason_code: typeof raw.execution_reason_code === 'string' ? raw.execution_reason_code : undefined,
+    attempt_id: typeof raw.attempt_id === 'string' ? raw.attempt_id : undefined,
+    phase_updated_at: typeof raw.phase_updated_at === 'string' ? raw.phase_updated_at : undefined,
+    bootstrap_phase: typeof raw.bootstrap_phase === 'string' ? raw.bootstrap_phase : undefined,
+    bootstrap_last_heartbeat_at: typeof raw.bootstrap_last_heartbeat_at === 'string' ? raw.bootstrap_last_heartbeat_at : undefined,
+    diagnostic_hold_until: typeof raw.diagnostic_hold_until === 'string' ? raw.diagnostic_hold_until : undefined,
+    diagnostic_summary: typeof raw.diagnostic_summary === 'string' ? raw.diagnostic_summary : undefined,
+  } as TaskProgressResponse;
+}
+
+export interface TaskEstimateInput {
+ vcf_asset_id?: string; vcf_sample_name?: string;
+  normal_sample_id?: string;
+  sampleId?: string;
+  pedigreeId?: string;
+  pipelineId: string;
+}
+
+export interface TaskEstimateResponse {
+  estimated_minutes: number;
+}
+
+export interface TaskBatchInputRow {
+ vcf_asset_id?: string; vcf_sample_name?: string;
+  row_number: number;
+  sample_identifier: string;
+  pedigree_id: string;
+  pipeline_id: string;
+  remark: string;
+  enable_cnv: boolean;
+  enable_sv: boolean;
+}
+
+export interface TaskBatchPreviewRow extends TaskBatchInputRow {
+  sample_id?: string;
+  sample_internal_id?: string;
+  pipeline_name?: string;
+  pipeline_version?: string;
+  template?: string;
+  estimated_minutes: number;
+  valid: boolean;
+  errors: string[];
+}
+
+export interface TaskBatchPreviewResponse {
+  rows: TaskBatchPreviewRow[];
+  total_rows: number;
+  valid_rows: number;
+  invalid_rows: number;
+  total_estimated_minutes: number;
+}
+
+export interface TaskBatchCreateResult {
+  row_number: number;
+  status: 'created' | 'failed' | 'skipped';
+  task?: AnalysisTask;
+  error?: string;
+}
+
+export interface TaskBatchCreateResponse {
+  results: TaskBatchCreateResult[];
+  created_count: number;
+  failed_count: number;
+  skipped_count: number;
 }
 
 export const tasksApi = {
-  list(params?: { status?: string; sampleId?: string; page?: number; page_size?: number; search?: string }): Promise<TaskListResponse> {
+  /** List tasks with optional filters */
+  list(params?: {
+    status?: string;
+    sampleId?: string;
+    page?: number;
+    page_size?: number;
+  }): Promise<TaskListResponse> {
     const searchParams: Record<string, string> = {};
-    if (params?.status && params.status !== 'all') searchParams.status = params.status;
+    if (params?.status) searchParams.status = params.status;
     if (params?.sampleId) searchParams.sampleId = params.sampleId;
     if (params?.page) searchParams.page = String(params.page);
     if (params?.page_size) searchParams.page_size = String(params.page_size);
-    if (params?.search) searchParams.search = params.search;
-    return api.get<unknown>('/v1/tasks', { params: searchParams, cache: 'no-store' })
-      .then((response) => normalizeTaskListResponse(response, params?.page ?? 1, params?.page_size ?? 50));
+    return api
+      .get<MaybeTaskList>('/v1/tasks', { params: searchParams })
+      .then(response => normalizeTaskListResponse(response, params?.page ?? 1, params?.page_size ?? 20));
   },
 
+  /** Create a new task */
   async create(data: TaskCreateRequest): Promise<AnalysisTask> {
-    return normalizeTask(await api.post('/v1/tasks', {
-      sample_id: data.sampleId,
-      internal_id: data.internalId,
-      pipeline_id: data.pipelineId,
-      pipeline_name: data.pipelineName,
-      pipeline_version: data.pipelineVersion,
-      remark: data.remark,
-    }));
+    return normalizeTask(await api.post<unknown>('/v1/tasks', data));
   },
 
+  /** Preview the server-authoritative runtime estimate without creating a task. */
+  estimate(data: TaskEstimateInput): Promise<TaskEstimateResponse> {
+    return api.post<TaskEstimateResponse>('/v1/tasks/estimate', data);
+  },
+
+  previewBatch(file: File): Promise<TaskBatchPreviewResponse> {
+    const form = new FormData();
+    form.append('file', file);
+    return api.postForm<TaskBatchPreviewResponse>('/v1/tasks/batch/preview', form);
+  },
+
+  createBatch(rows: TaskBatchInputRow[]): Promise<TaskBatchCreateResponse> {
+    return api.post<TaskBatchCreateResponse>('/v1/tasks/batch', { rows });
+  },
+
+  /** Get a single task by UUID */
   async get(id: string): Promise<AnalysisTaskDetail> {
-    const task = normalizeTask(await api.get(`/v1/tasks/${encodeURIComponent(id)}`, { cache: 'no-store' }));
-    return { ...task, name: task.name || task.internalId || task.id };
+    return normalizeTaskDetail(await api.get<unknown>(`/v1/tasks/${encodeURIComponent(id)}`));
   },
 
-  async update(id: string, data: TaskUpdateRequest): Promise<AnalysisTask> {
-    return normalizeTask(await api.put(`/v1/tasks/${encodeURIComponent(id)}`, {
-      internal_id: data.internalId,
-      pipeline: data.pipeline,
-      remark: data.remark,
-    }));
-  },
-
-  async start(id: string): Promise<AnalysisTask> {
-    return normalizeTask(await api.post(`/v1/tasks/${encodeURIComponent(id)}/start`));
-  },
-
-  async stop(id: string): Promise<AnalysisTask> {
-    return normalizeTask(await api.post(`/v1/tasks/${encodeURIComponent(id)}/stop`));
-  },
-
-  async retry(id: string): Promise<AnalysisTask> {
-    return normalizeTask(await api.post(`/v1/tasks/${encodeURIComponent(id)}/retry`));
-  },
-
-  cancel(id: string): Promise<void> {
-    return api.delete(`/v1/tasks/${encodeURIComponent(id)}`);
+  /** Get the sample associated with a task */
+  async getSample(id: string): Promise<SampleDetail> {
+    const sample = await api.get<unknown>(`/v1/tasks/${encodeURIComponent(id)}/sample`);
+    return normalizeSampleDetail(sample);
   },
 
   async setInterpretationCompleted(id: string, completed: boolean, attemptId: string): Promise<AnalysisTaskDetail> {
-    const task = normalizeTask(await api.put(`/v1/tasks/${encodeURIComponent(id)}/interpretation-completion`, { completed, attemptId }));
-    return { ...task, name: task.name || task.internalId || task.id };
+    return normalizeTaskDetail(await api.put(`/v1/tasks/${encodeURIComponent(id)}/interpretation-completion`, { completed, attemptId }));
   },
 
+  /** Update a task */
+  async update(id: string, data: TaskUpdateRequest): Promise<AnalysisTask> {
+    return normalizeTask(await api.put<unknown>(`/v1/tasks/${encodeURIComponent(id)}`, data));
+  },
+
+  /** Start a task */
+  async start(id: string): Promise<AnalysisTask> {
+    return normalizeTask(await api.post<unknown>(`/v1/tasks/${encodeURIComponent(id)}/start`));
+  },
+
+  /** Stop a running task */
+  async stop(id: string): Promise<AnalysisTask> {
+    return normalizeTask(await api.post<unknown>(`/v1/tasks/${encodeURIComponent(id)}/stop`));
+  },
+
+  /** Retry a failed task */
+  async retry(id: string): Promise<AnalysisTask> {
+    return normalizeTask(await api.post<unknown>(`/v1/tasks/${encodeURIComponent(id)}/retry`));
+  },
+
+  /** Cancel/delete a task */
+  cancel(id: string): Promise<void> {
+    return api.delete<void>(`/v1/tasks/${encodeURIComponent(id)}`);
+  },
+
+  /** Get task progress (with Sepiida data) */
+  async getProgress(id: string): Promise<TaskProgressResponse> {
+    return normalizeTaskProgress(await api.get<unknown>(`/v1/tasks/${encodeURIComponent(id)}/progress`));
+  },
+
+  /** Retry or recover a completed task's structured result import from its archive. */
+  async retryResultImport(id: string): Promise<TaskProgressResponse> {
+    return normalizeTaskProgress(await api.post<unknown>(`/v1/tasks/${encodeURIComponent(id)}/results/import/retry`));
+  },
+
+  /** Get scoped operational task statistics. */
   getStats(): Promise<TaskStatsResponse> {
-    return api.get<TaskStatsResponse>('/v1/tasks/stats', { cache: 'no-store' });
+    return api.get<TaskStatsResponse>('/v1/tasks/stats');
+  },
+
+  /** Get the execution log as plain text. */
+  async getLogs(id: string): Promise<string> {
+    const value = await api.get<unknown>(`/v1/tasks/${encodeURIComponent(id)}/logs`);
+    return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
   },
 };

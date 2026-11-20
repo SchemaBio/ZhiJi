@@ -1,13 +1,28 @@
 'use client';
+import { formatNumericString } from '@/i18n/format';
+
+import { errorText } from '@/i18n/errors';
+
+import { useText } from '@/i18n/useText';
+import { translateUI, localizeDisplay } from '@/i18n/text';
+
+import { ActionButton } from '@/components/shared/ActionButton';
+
+
+import { GeneLinks } from './GeneLinks';
 
 import * as React from 'react';
-import { DataTable, Tag, Input } from '@schema/ui-kit';
+import { DataTable, Input } from '@schema/ui-kit';
+import { Tag } from '@/components/shared/Tag';
 import type { Column } from '@schema/ui-kit';
-import { Search, ListFilter } from 'lucide-react';
+import { Search } from 'lucide-react';
 import type { UPDRegion, UPDType, TableFilterState, PaginatedResult } from '../types';
 import { DEFAULT_FILTER_STATE } from '../types';
-import { getUPDRegions, getGeneLists, type GeneListOption } from '../mock-data';
-import { ReviewCheckbox, ReportCheckbox, ReviewColumnHeader, ReportColumnHeader } from './ReviewCheckboxes';
+import { getUPDRegions, focusVariant, pinVariant } from '../result-api';
+import { filterableColumns, resultColumnLabels } from './ResultColumnFilter';
+import { ParquetColumnFilterBar } from './ParquetColumnFilterBar';
+import { PinCheckbox, FocusCheckbox, PinColumnHeader, FocusColumnHeader } from './ReviewCheckboxes';
+import { useDebouncedSearch } from '../hooks/useDebouncedSearch';
 
 interface UPDTabProps {
   taskId: string;
@@ -16,47 +31,59 @@ interface UPDTabProps {
 }
 
 // UPD类型配置
-const UPD_TYPE_CONFIG: Record<UPDType, { label: string; variant: 'info' | 'warning' }> = {
+const UPD_TYPE_CONFIG: Record<UPDType, { label: string; variant: 'info' | 'warning' | 'neutral' }> = {
   Isodisomy: { label: '等位UPD', variant: 'warning' },
   Heterodisomy: { label: '异位UPD', variant: 'info' },
+  Unknown: { label: '未提供', variant: 'neutral' },
 };
 
-export function UPDTab({ 
-  taskId, 
+export function UPDTab({
+  taskId,
   filterState: externalFilterState,
-  onFilterChange 
+  onFilterChange
 }: UPDTabProps) {
+  const t = useText();
   const [internalFilterState, setInternalFilterState] = React.useState<TableFilterState>(DEFAULT_FILTER_STATE);
   const [result, setResult] = React.useState<PaginatedResult<UPDRegion> | null>(null);
   const [loading, setLoading] = React.useState(true);
-  const [geneLists, setGeneLists] = React.useState<GeneListOption[]>([]);
-  const [reviewStatus, setReviewStatus] = React.useState<Record<string, { reviewed: boolean; reported: boolean }>>({});
+  const [requestError, setRequestError] = React.useState<string | null>(null);
+  const [operationError, setOperationError] = React.useState<string | null>(null);
+  const [pendingVariantIDs, setPendingVariantIDs] = React.useState<Set<string>>(() => new Set());
+  const [reviewStatus, setReviewStatus] = React.useState<Record<string, { pinned: boolean; focused: boolean }>>({});
+  React.useEffect(()=>{
+    const sync=(event:Event)=>{const d=(event as CustomEvent).detail;if(d?.taskId===taskId&&d?.table==='upd')setReviewStatus({});};
+    window.addEventListener('zhiji:result-overlays-synced',sync);
+    return()=>window.removeEventListener('zhiji:result-overlays-synced',sync);
+  },[taskId]);
 
   const filterState = externalFilterState ?? internalFilterState;
   const setFilterState = onFilterChange ?? setInternalFilterState;
 
   // 加载基因列表
   React.useEffect(() => {
-    async function loadGeneLists() {
-      const lists = await getGeneLists();
-      setGeneLists(lists);
-    }
-    loadGeneLists();
-  }, []);
-
-  React.useEffect(() => {
+    const controller = new AbortController();
     async function loadData() {
       setLoading(true);
-      const data = await getUPDRegions(taskId, filterState);
-      setResult(data);
-      setLoading(false);
+      setRequestError(null);
+      try {
+        const data = await getUPDRegions(taskId, filterState, controller.signal);
+        if (!controller.signal.aborted) setResult(data);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setRequestError(error instanceof Error ? errorText(error, t) : t("tasks.unableToLoadUpdRegions7b3250"));
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
     }
-    loadData();
+    void loadData();
+    return () => controller.abort();
   }, [taskId, filterState]);
 
   const handleSearch = React.useCallback((query: string) => {
     setFilterState({ ...filterState, searchQuery: query, page: 1 });
   }, [filterState, setFilterState]);
+  const [searchInput, setSearchInput] = useDebouncedSearch(filterState.searchQuery, handleSearch);
 
   const handleSortChange = React.useCallback((column: string, direction: 'asc' | 'desc' | null) => {
     setFilterState({
@@ -66,86 +93,85 @@ export function UPDTab({
     });
   }, [filterState, setFilterState]);
 
-  const handleTypeFilter = React.useCallback((type: string) => {
-    const newFilters = { ...filterState.filters };
-    if (type) {
-      newFilters.type = type;
-    } else {
-      delete newFilters.type;
+  // 处理置顶状态变更
+  const handlePinChange = React.useCallback(async (id: string, checked: boolean, currentState: { pinned: boolean; focused: boolean }) => {
+    setOperationError(null);
+    setReviewStatus(prev => ({
+      ...prev,
+      [id]: { ...currentState, pinned: checked }
+    }));
+    setPendingVariantIDs((previous) => new Set(previous).add(id));
+    try {
+      await pinVariant(taskId, 'upd', id, checked);
+    } catch (error) {
+      setReviewStatus(prev => ({ ...prev, [id]: currentState }));
+      setOperationError(error instanceof Error ? errorText(error, t) : t("tasks.unableToUpdatePinStatus77c5f1"));
+    } finally {
+      setPendingVariantIDs((previous) => {
+        const next = new Set(previous);
+        next.delete(id);
+        return next;
+      });
     }
-    setFilterState({ ...filterState, filters: newFilters, page: 1 });
-  }, [filterState, setFilterState]);
+  }, [taskId, t]);
 
-  const handleGeneListFilter = React.useCallback((geneListId: string) => {
-    setFilterState({ 
-      ...filterState, 
-      geneListId: geneListId || undefined, 
-      page: 1 
-    });
-  }, [filterState, setFilterState]);
-
-  // 处理审核状态变更
-  const handleReviewChange = React.useCallback((id: string, checked: boolean) => {
+  // 处理关注状态变更
+  const handleFocusChange = React.useCallback(async (id: string, checked: boolean, currentState: { pinned: boolean; focused: boolean }) => {
+    setOperationError(null);
     setReviewStatus(prev => ({
       ...prev,
-      [id]: { ...prev[id], reviewed: checked, reported: prev[id]?.reported ?? false }
+      [id]: { ...currentState, focused: checked }
     }));
-  }, []);
+    setPendingVariantIDs((previous) => new Set(previous).add(id));
+    try {
+      await focusVariant(taskId, 'upd', id, checked);
+    } catch (error) {
+      setReviewStatus(prev => ({ ...prev, [id]: currentState }));
+      setOperationError(error instanceof Error ? errorText(error, t) : t("tasks.unableToMarkForFocus8d3bd6"));
+    } finally {
+      setPendingVariantIDs((previous) => {
+        const next = new Set(previous);
+        next.delete(id);
+        return next;
+      });
+    }
+  }, [taskId, t]);
 
-  // 处理回报状态变更
-  const handleReportChange = React.useCallback((id: string, checked: boolean) => {
-    setReviewStatus(prev => ({
-      ...prev,
-      [id]: { reviewed: prev[id]?.reviewed ?? false, reported: checked }
-    }));
-  }, []);
-
-  // 获取变异的审核状态
+  // 获取变异的置顶状态
   const getReviewState = React.useCallback((variant: UPDRegion) => {
-    return reviewStatus[variant.id] ?? { reviewed: variant.reviewed, reported: variant.reported };
+    return reviewStatus[variant.id] ?? { pinned: variant.pinned, focused: variant.focused };
   }, [reviewStatus]);
 
-  // 按审核/回报状态排序的数据
-  const sortedData = React.useMemo(() => {
-    if (!result?.data) return [];
-    return [...result.data].sort((a, b) => {
-      const stateA = getReviewState(a);
-      const stateB = getReviewState(b);
-      if (stateA.reported !== stateB.reported) return stateA.reported ? -1 : 1;
-      if (stateA.reviewed !== stateB.reviewed) return stateA.reviewed ? -1 : 1;
-      return 0;
-    });
-  }, [result?.data, getReviewState]);
-
-  const selectedGeneList = React.useMemo(() => {
-    if (!filterState.geneListId) return null;
-    return geneLists.find(list => list.id === filterState.geneListId);
-  }, [filterState.geneListId, geneLists]);
+  const sortedData = result?.data ?? [];
 
   const columns: Column<UPDRegion>[] = [
     {
-      id: 'reviewed',
-      header: <ReviewColumnHeader />,
+      id: 'focused',
+      header: <FocusColumnHeader />,
       accessor: (row) => {
         const state = getReviewState(row);
         return (
-          <ReviewCheckbox
-            checked={state.reviewed}
-            onChange={(checked) => handleReviewChange(row.id, checked)}
+          <FocusCheckbox
+            checked={state.focused}
+            onChange={(checked) => handleFocusChange(row.id, checked, state)}
+            disabled={pendingVariantIDs.has(row.id)}
           />
         );
       },
       width: 60,
     },
     {
-      id: 'reported',
-      header: <ReportColumnHeader />,
+      id: 'pinned',
+      header: <PinColumnHeader />,
       accessor: (row) => {
         const state = getReviewState(row);
         return (
-          <ReportCheckbox
-            checked={state.reported}
-            onChange={(checked) => handleReportChange(row.id, checked)}
+          <PinCheckbox
+            reasons={row.pinReasons?.length?row.pinReasons:row.automaticAssessment?.pending}
+            source={row.pinSource}
+            checked={state.pinned}
+            onChange={(checked) => handlePinChange(row.id, checked, state)}
+            disabled={pendingVariantIDs.has(row.id)}
           />
         );
       },
@@ -153,30 +179,30 @@ export function UPDTab({
     },
     {
       id: 'chromosome',
-      header: '染色体',
+      header: t("history.chromosome326659"),
       accessor: 'chromosome',
       width: 80,
       sortable: true,
     },
     {
       id: 'startPosition',
-      header: '起始位置',
+      header: t("tasks.startPositione89b02"),
       accessor: (row) => row.startPosition,
       width: 120,
       sortable: true,
     },
     {
       id: 'endPosition',
-      header: '终止位置',
+      header: t("tasks.endPositioncb3b4c"),
       accessor: (row) => row.endPosition,
       width: 120,
     },
     {
       id: 'length',
-      header: '长度',
+      header: t("history.lengtha53949"),
       accessor: (row) => {
-        if (row.length >= 1000000) return `${(row.length / 1000000).toFixed(2)}Mb`;
-        if (row.length >= 1000) return `${(row.length / 1000).toFixed(1)}kb`;
+        if (row.length >= 1000000) return `${formatNumericString((row.length / 1000000).toFixed(2), t.locale)}Mb`;
+        if (row.length >= 1000) return `${formatNumericString((row.length / 1000).toFixed(1), t.locale)}kb`;
         return `${row.length}bp`;
       },
       width: 100,
@@ -184,25 +210,25 @@ export function UPDTab({
     },
     {
       id: 'type',
-      header: '类型',
+      header: t("history.typee4e46c"),
       accessor: (row) => {
         const config = UPD_TYPE_CONFIG[row.type];
-        return <Tag variant={config.variant}>{config.label}</Tag>;
+        return <Tag variant={config.variant}>{translateUI(config.label, t)}</Tag>;
       },
       width: 100,
       sortable: true,
     },
     {
       id: 'genes',
-      header: '涉及基因',
-      accessor: (row) => row.genes.join(', '),
+      header: t("history.affectedGenes9fbbad"),
+      accessor: (row) => <GeneLinks genes={row.genes} />,
       width: 200,
     },
     {
       id: 'parentOfOrigin',
-      header: '亲本来源',
+      header: t("tasks.parentOfOrigin808f6f"),
       accessor: (row) => {
-        const labels = { Maternal: '母源', Paternal: '父源', Unknown: '未知' };
+        const labels = { Maternal: t("tasks.maternal7a353e"), Paternal: t("tasks.paternal9d5a70"), Unknown: t("samples.unknownd9c32a") };
         return row.parentOfOrigin ? labels[row.parentOfOrigin] : '-';
       },
       width: 80,
@@ -212,66 +238,47 @@ export function UPDTab({
   const totalPages = result ? Math.ceil(result.total / result.pageSize) : 0;
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-4">
-          <div className="w-64">
+    <div className="variant-tab-panel flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="yj-variant-toolbar">
+      <ParquetColumnFilterBar taskId={taskId} table="upd" columns={localizeDisplay(result?.columns ?? [], t)} columnTypes={result?.columnTypes} columnLabels={resultColumnLabels(columns, result, 'upd', t)} state={filterState} onChange={setFilterState} />
+      <div className="yj-variant-controls-row">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <div className="w-52 max-w-full shrink-0 sm:w-64">
             <Input
-              placeholder="搜索染色体..."
-              value={filterState.searchQuery}
-              onChange={(e) => handleSearch(e.target.value)}
+              className="yj-variant-search [&_input]:min-w-0 [&_input]:w-0"
+              placeholder={t("tasks.searchChromosomed961dd")}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
               leftElement={<Search className="w-4 h-4" />}
             />
           </div>
 
           {/* 基因列表筛选 */}
-          <div className="relative">
-            <ListFilter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-fg-muted pointer-events-none" />
-            <select
-              value={filterState.geneListId || ''}
-              onChange={(e) => handleGeneListFilter(e.target.value)}
-              className="pl-9 pr-3 py-1.5 text-sm border border-border-default rounded-md bg-canvas-default text-fg-default min-w-[180px] appearance-none cursor-pointer"
-            >
-              <option value="">全部基因</option>
-              {geneLists.map((list) => (
-                <option key={list.id} value={list.id}>
-                  {list.name} ({list.geneCount})
-                </option>
-              ))}
-            </select>
-          </div>
 
-          <select
-            value={(filterState.filters.type as string) || ''}
-            onChange={(e) => handleTypeFilter(e.target.value)}
-            className="px-3 py-1.5 text-sm border border-border-default rounded-md bg-canvas-default text-fg-default"
-          >
-            <option value="">全部类型</option>
-            {Object.entries(UPD_TYPE_CONFIG).map(([key, config]) => (
-              <option key={key} value={key}>{config.label}</option>
-            ))}
-          </select>
         </div>
 
-        <div className="flex items-center gap-4 text-sm text-fg-muted">
-          {selectedGeneList && (
-            <span className="text-accent-fg">
-              已筛选: {selectedGeneList.name}
-            </span>
-          )}
-          <span>共 {result?.total ?? 0} 条UPD区域</span>
+        <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-fg-muted">
+          <span>{t("history.total497064")}{result?.total ?? 0} {t("tasks.updRegionsaa1daa")}</span>
         </div>
       </div>
+      </div>
 
-      {loading ? (
+      {requestError ? (
+        <div className="rounded-md border border-danger-muted bg-danger-subtle px-3 py-3 text-sm text-danger-fg">
+          {requestError}
+          <ActionButton permission={null} action="retry" variant="ghost" onClick={() => setFilterState({ ...filterState })} className="ml-3 underline">{t("pipeline.retrye2d53a")}</ActionButton>
+        </div>
+      ) : loading && !result ? (
         <div className="flex items-center justify-center py-12">
           <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-accent-emphasis" />
         </div>
-      ) : result && result.data.length > 0 ? (
+      ) : result ? (
         <>
           <DataTable
+            className="variant-results-table min-h-0 flex-1"
+            stickyHeader
             data={sortedData}
-            columns={columns}
+            columns={localizeDisplay(filterableColumns(columns, result, filterState, setFilterState, 'upd', t), t)}
             rowKey="id"
             striped
             density="compact"
@@ -281,33 +288,32 @@ export function UPDTab({
           />
 
           {totalPages > 1 && (
-            <div className="flex items-center justify-between mt-4">
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 mt-2">
               <div className="text-sm text-fg-muted">
-                第 {filterState.page} / {totalPages} 页
-              </div>
+                {t("history.pagef49534")}{filterState.page} / {totalPages} {t("history.labelaf8438")}</div>
               <div className="flex items-center gap-2">
-                <button
+                <ActionButton variant="ghost"
                   onClick={() => setFilterState({ ...filterState, page: filterState.page - 1 })}
                   disabled={filterState.page <= 1}
-                  className="px-3 py-1 text-sm border border-border-default rounded hover:bg-canvas-subtle disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="yj-tool-button"
                 >
-                  上一页
-                </button>
-                <button
+                  {t("history.previousb41561")}</ActionButton>
+                <ActionButton variant="ghost"
                   onClick={() => setFilterState({ ...filterState, page: filterState.page + 1 })}
                   disabled={filterState.page >= totalPages}
-                  className="px-3 py-1 text-sm border border-border-default rounded hover:bg-canvas-subtle disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="yj-tool-button"
                 >
-                  下一页
-                </button>
+                  {t("history.next67a246")}</ActionButton>
               </div>
             </div>
           )}
         </>
       ) : (
         <div className="text-center py-12 text-fg-muted">
-          暂无UPD区域数据
-        </div>
+          {t("tasks.noUpdRegionDatae755f0")}</div>
+      )}
+      {operationError && (
+        <div className="mt-3 rounded-md border border-danger-muted bg-danger-subtle px-3 py-2 text-sm text-danger-fg">{operationError}</div>
       )}
     </div>
   );

@@ -1,31 +1,21 @@
-import { describe, expect, it } from 'vitest';
-import { permissionForPath, userHasPermission } from './permissions';
+import { expect, it } from 'vitest';
+import { BUSINESS_PERMISSIONS, permissionForPath, userHasPermission } from './permissions';
 import type { User } from '@/types/user';
 
-const user = (permissions: string[]): User => ({
-  id: 'u1',
-  email: 'a@example.com',
-  name: 'A',
-  systemRole: 'ORG_USER',
-  isActive: true,
-  createdAt: '',
-  updatedAt: '',
-  permissions,
+const user: User = { id: '1', name: 'Reader', email: 'reader@example.invalid', systemRole: 'ORG_USER', isActive: true, createdAt: '', updatedAt: '' };
+it('defaults ordinary self-hosted accounts to no grants and always grants administrators', () => {
+  for (const permission of BUSINESS_PERMISSIONS) {
+    expect(userHasPermission(user, permission, 'loligo')).toBe(false);
+    expect(userHasPermission({ ...user, systemRole: 'PLATFORM_ADMIN' }, permission, 'loligo')).toBe(true);
+    expect(userHasPermission(user, permission, 'onykia')).toBe(true);
+  }
 });
-
-describe('permissions', () => {
-  it('grants every business permission on onykia', () => {
-    expect(userHasPermission(null, 'tasks.manage', 'onykia')).toBe(true);
-  });
-
-  it('requires an explicit grant on loligo', () => {
-    expect(userHasPermission(user(['samples.write']), 'samples.write', 'loligo')).toBe(true);
-    expect(userHasPermission(user(['samples.write']), 'tasks.manage', 'loligo')).toBe(false);
-    expect(userHasPermission(null, 'tasks.manage', 'loligo')).toBe(false);
-  });
-
-  it('maps task interpretation paths', () => {
-    expect(permissionForPath('/tasks/new')).toBe('tasks.manage');
-    expect(permissionForPath('/history')).toBe('interpretation_reports.manage');
-  });
+it('keeps baseline, interpretation and task grants independent', () => {
+  const baselineUser = { ...user, permissions: ['baselines.manage'] };
+  expect(userHasPermission(baselineUser, 'baselines.manage', 'loligo')).toBe(true);
+  expect(userHasPermission(baselineUser, 'tasks.manage', 'loligo')).toBe(false);
+  expect(userHasPermission(baselineUser, 'interpretation_reports.manage', 'loligo')).toBe(false);
+  expect(permissionForPath('/pipeline/bed')).toBe('bed.manage');
+  expect(permissionForPath('/tasks/new')).toBe('tasks.manage');
+  expect(permissionForPath('/tasks/task-id')).toBe('interpretation_reports.manage');
 });

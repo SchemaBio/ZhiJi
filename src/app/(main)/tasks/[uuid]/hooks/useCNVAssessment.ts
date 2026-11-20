@@ -22,7 +22,10 @@ import { classify } from '../utils/pathogenicity-classifier';
  * 生成唯一ID
  */
 function generateId(): string {
-  return `assessment-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `assessment-${crypto.randomUUID()}`;
+  }
+  return `assessment-${Date.now()}`;
 }
 
 /**
@@ -34,12 +37,22 @@ function createDefaultAssessment(cnv: CNVSegment | CNVExon): CNVAssessment {
     ? createDefaultLossAssessmentCriteria() 
     : createDefaultGainAssessmentCriteria();
   
+  const baseline = cnv.automaticAssessment;
+  const rawPending: string[] = baseline?.pending ? [...baseline.pending] : [];
+  const filteredPending = rawPending.filter(item => !item.startsWith('phenotype.') && !item.toLowerCase().includes('pending'));
+  const autoEvidenceNotes: string[] = filteredPending.length > 0 ? filteredPending : ['本地证据不足，所有条款保持未选。'];
+  if (baseline?.cnvCriteria) Object.assign(criteria, structuredClone(baseline.cnvCriteria));
+  else {criteria.section3.confirmed = false; criteria.section5.other = {selected: null, score: 0};}
+  if (baseline) autoEvidenceNotes.unshift(`规则 ${baseline.profile}；评估版本 ${baseline.contextVersion}`);
+
   // 计算初始评分
   const scoreResult: ScoreResult = isLoss
     ? calculateLossTotal(criteria as LossAssessmentCriteria)
     : calculateGainTotal(criteria as GainAssessmentCriteria);
 
   return {
+    assessmentState: baseline?.cnvClassification ? 'evaluated' : 'insufficient_evidence',
+    assessmentVersion: baseline?.contextVersion,
     id: generateId(),
     cnvId: cnv.id,
     cnvType: cnv.type,
@@ -47,6 +60,7 @@ function createDefaultAssessment(cnv: CNVSegment | CNVExon): CNVAssessment {
     sectionScores: scoreResult.sectionScores,
     totalScore: scoreResult.totalScore,
     classification: scoreResult.classification,
+    autoEvidenceNotes,
     isAutoCalculated: true,
     isUserModified: false,
     createdAt: new Date().toISOString(),
@@ -70,8 +84,8 @@ export function useCNVAssessment(cnv: CNVSegment | CNVExon | null) {
     return createDefaultAssessment(cnv);
   });
 
-  // 是否为Loss类型
-  const isLoss = cnv?.type === 'Deletion';
+  // 是否为Loss类型（优先读取当前评估状态中的cnvType，默认跟随cnv.type）
+  const isLoss = (assessment?.cnvType ?? cnv?.type) === 'Deletion';
 
   /**
    * 更新评估标准并重新计算评分
@@ -81,13 +95,15 @@ export function useCNVAssessment(cnv: CNVSegment | CNVExon | null) {
   ) => {
     if (!assessment) return;
 
+    const currentIsLoss = (assessment.cnvType ?? cnv?.type) === 'Deletion';
     // 重新计算评分
-    const scoreResult: ScoreResult = isLoss
+    const scoreResult: ScoreResult = currentIsLoss
       ? calculateLossTotal(newCriteria as LossAssessmentCriteria)
       : calculateGainTotal(newCriteria as GainAssessmentCriteria);
 
     setAssessment({
       ...assessment,
+      assessmentState: hasCNVEvidence(newCriteria) ? 'evaluated' : 'insufficient_evidence',
       criteria: newCriteria,
       sectionScores: scoreResult.sectionScores,
       totalScore: scoreResult.totalScore,
@@ -95,7 +111,33 @@ export function useCNVAssessment(cnv: CNVSegment | CNVExon | null) {
       isUserModified: true,
       updatedAt: new Date().toISOString(),
     });
-  }, [assessment, isLoss]);
+  }, [assessment, cnv?.type]);
+
+  /**
+   * 自由切换 Gain / Loss 计算器模式
+   */
+  const switchCalculatorMode = useCallback((mode: 'Loss' | 'Gain') => {
+    if (!assessment) return;
+    const newType = mode === 'Loss' ? 'Deletion' : 'Amplification';
+    if (assessment.cnvType === newType) return;
+    const newCriteria = mode === 'Loss' ? createDefaultLossAssessmentCriteria() : createDefaultGainAssessmentCriteria();
+    const scoreResult = mode === 'Loss'
+      ? calculateLossTotal(newCriteria as LossAssessmentCriteria)
+      : calculateGainTotal(newCriteria as GainAssessmentCriteria);
+    setAssessment(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        cnvType: newType,
+        criteria: newCriteria,
+        sectionScores: scoreResult.sectionScores,
+        totalScore: scoreResult.totalScore,
+        classification: scoreResult.classification,
+        isUserModified: true,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }, [assessment]);
 
   /**
    * 重置评估到默认值
@@ -122,8 +164,8 @@ export function useCNVAssessment(cnv: CNVSegment | CNVExon | null) {
     setAssessment(savedAssessment);
     setOriginalAssessment(savedAssessment);
 
-    // TODO: 这里可以添加API调用来持久化到后端
-    // await api.saveAssessment(savedAssessment);
+    // 返回已规范化的评估对象；调用方负责写入 Loligo
+    // `/results/cnv-assessments/:type/:vid`，避免 Hook 内部耦合任务 ID。
 
     return savedAssessment;
   }, [assessment]);
@@ -162,7 +204,14 @@ export function useCNVAssessment(cnv: CNVSegment | CNVExon | null) {
     loadAssessment,
     hasUnsavedChanges,
     initializeAssessment,
+    switchCalculatorMode,
   };
+}
+
+function hasCNVEvidence(criteria:LossAssessmentCriteria|GainAssessmentCriteria):boolean{
+ if(criteria.section1.selected||criteria.section3.confirmed||criteria.section4.aiReviewed?.length)return true;
+ const selected=(value:unknown):boolean=>!!value&&typeof value==='object'&&Object.entries(value).some(([key,item])=>key==='selected'?!!item:key==='score'||key==='count'||key==='confirmedCount'||key==='assumedCount'||/^4[F-H]$/.test(key)?typeof item==='number'&&item!==0:selected(item));
+ return selected(criteria.section2)||selected(criteria.section4)||selected(criteria.section5);
 }
 
 /**

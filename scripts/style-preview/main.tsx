@@ -1,0 +1,61 @@
+import { previewReportFailure, previewPageFailure } from './api';
+import PipelinePage from '../../src/app/(main)/pipeline/page';
+import HomePage from '../../src/app/page';
+import GeneListPage from '../../src/app/(main)/pipeline/gene-list/page';
+import BEDPage from '../../src/app/(main)/pipeline/bed/page';
+import DataPage from '../../src/app/(main)/data/page';
+import { UploadProvider } from '../../src/components/providers/UploadProvider';
+import { SampleDetailPanel } from '../../src/app/(main)/samples/components/SampleDetailPanel';
+import SamplesPage from '../../src/app/(main)/samples/page';
+import NewTaskPage from '../../src/app/(main)/tasks/new/page';
+import SampleDetailPage from '../../src/app/(main)/samples/[uuid]/page';
+import AboutPage from '../../src/app/(main)/about/page';
+import { PrivacyDocument } from '../../src/app/privacy/PrivacyDocument';
+import { LocaleProvider, useAppLocale } from '../../src/components/providers/LocaleProvider';
+import { localeCookie, policyLocale, resolveLocale } from '../../src/i18n/locales';
+import RechargePage from '../../src/app/(main)/billing/recharge/page';
+import PedigreePage from '../../src/app/(main)/samples/pedigree/page';
+import LoginPage from '../../src/app/login/page';
+import RegisterPage from '../../src/app/register/page';
+import ForgotPasswordPage from '../../src/app/forgot-password/page';
+import ResetPasswordPage from '../../src/app/reset-password/page';
+import React from 'react';
+import {previewEvidence} from './results';
+import {previewAssessment} from './assessment';
+import { createRoot } from 'react-dom/client';
+import { ThemeProvider } from '@schema/ui-kit';
+import '../../src/app/globals.css';
+import { AppShell } from '../../src/components/layout/AppShell';
+import { PageContent } from '../../src/components/layout';
+import AdminPage from '../../src/app/(main)/admin/page';
+import TemplatesPage from '../../src/app/(main)/pipeline/templates/page';
+import { PermissionsManagement } from '../../src/app/(main)/settings/components/PermissionsManagement';
+import SettingsPage from '../../src/app/(main)/settings/page';
+import BaselinePage from '../../src/app/(main)/pipeline/baseline/page';
+import PipelineConfigPage from '../../src/app/(main)/pipeline/config/page';
+import HistoryPage from '../../src/app/(main)/history/page';
+import BillingPage from '../../src/app/(main)/settings/billing/page';
+import DashboardPage from '../../src/app/(main)/dashboard/page';
+import TaskPage from '../../src/app/(main)/tasks/page';
+import DetailPage from '../../src/app/(main)/tasks/[uuid]/page';
+import { usePathname, useRouter, useSearchParams } from './navigation';
+
+function PrivacyPage() {
+  const lang = useSearchParams().get('lang');
+  const locale = useAppLocale();
+  return <PrivacyDocument overrideLocale={lang ? policyLocale(lang, locale) : undefined} />;
+}
+function Preview() { const path = usePathname(); const router = useRouter(); const [dark, setDark] = React.useState(false); const [controlsVisible, setControlsVisible] = React.useState(() => new URLSearchParams(location.search).get('previewControls') !== 'hidden');
+  React.useEffect(() => { document.documentElement.dataset.theme = dark ? 'dark' : 'light'; document.documentElement.classList.toggle('dark', dark); }, [dark]);
+  return <ThemeProvider defaultTheme="light">{controlsVisible && <div style={{ position: 'fixed', bottom: 12, left: 76, right: 12, maxWidth: 820, zIndex: 90 }} className="flex flex-wrap items-center gap-2 rounded-md border border-border-default bg-canvas-default px-3 py-2 text-xs">
+    <span>交互预览 · 合成数据</span><button onClick={() => setControlsVisible(false)}>隐藏预览控制</button><button onClick={previewReportFailure}>报告读取失败</button><button onClick={()=>previewPageFailure("dashboard")}>概览部分失败</button><button onClick={()=>previewPageFailure("billing")}>账单读取失败</button><button onClick={()=>previewPageFailure("pedigree")}>家系详情失败</button><button onClick={()=>previewPageFailure("data")}>数据读取失败</button><button onClick={()=>previewEvidence('ready')}>证据正常</button><button onClick={()=>previewEvidence('unavailable')}>证据缺失</button><button onClick={()=>previewEvidence('failed')}>证据失败</button><button onClick={()=>previewAssessment('cancelled')}>初评取消状态</button><button onClick={() => router.push('/dashboard')}>工作台</button><button onClick={() => router.push('/billing')}>费用</button><button onClick={() => router.push('/history')}>历史</button><button onClick={() => router.push('/settings')}>设置</button><button onClick={() => router.push('/pipeline/config')}>流程配置</button><button onClick={() => router.push('/pipeline/baseline')}>基线</button><button onClick={() => router.push('/pipeline/templates')}>报告服务</button><button onClick={() => router.push('/settings/permissions')}>权限</button><button onClick={() => router.push('/admin')}>管理</button><button onClick={() => router.push('/samples/pedigree')}>家系</button><button onClick={() => router.push('/tasks')}>任务列表</button><button onClick={() => router.push('/tasks/preview-task')}>位点判读</button><button onClick={() => setDark(!dark)}>{dark ? '浅色' : '深色'}</button>
+  </div>}{path === '/' ? <HomePage /> : path === '/privacy' ? <PrivacyPage /> : path === '/login' ? <LoginPage /> : path === '/register' ? <RegisterPage /> : path === '/forgot-password' ? <ForgotPasswordPage /> : path === '/reset-password' ? <ResetPasswordPage /> : <AppShell>{path === '/tasks' ? <TaskPage /> : path === '/history' ? <HistoryPage /> : path === '/admin' ? <AdminPage /> : path === '/settings/permissions' ? <PageContent className="yj-page-shell"><div className="yj-page-header"><div><h2 className="yj-page-title">权限管理</h2><p className="yj-page-subtitle">创建自部署子用户，并管理其角色与账号状态。</p></div></div><PermissionsManagement /></PageContent> : path === '/settings' ? <SettingsPage /> : path === '/pipeline/templates' ? <TemplatesPage /> : path === '/dashboard' ? <DashboardPage /> : path === '/billing' || path === '/settings/billing' ? <BillingPage /> : path === '/pipeline/config' ? <PipelineConfigPage /> : path === '/pipeline/baseline' ? <BaselinePage /> : path === '/pipeline' ? <PipelinePage /> : path === '/pipeline/gene-list' ? <GeneListPage /> : path === '/pipeline/bed' ? <BEDPage /> : path === '/data' ? <UploadProvider><DataPage /></UploadProvider> : path === '/samples/panel-preview' ? <div className="p-4 md:p-6"><SampleDetailPanel sampleId="detail-preview" /></div> : path === '/samples' ? <SamplesPage /> : path === '/tasks/new' ? <NewTaskPage /> : path.startsWith('/samples/detail-') ? <SampleDetailPage /> : path === '/about' ? <AboutPage /> : path === '/billing/recharge' ? <RechargePage /> : path === '/samples/pedigree' ? <PedigreePage /> : <DetailPage />}</AppShell>}</ThemeProvider>;
+}
+const requestedBackend = new URLSearchParams(location.search).get('previewBackend');
+if (requestedBackend === 'loligo' || requestedBackend === 'onykia') {
+  sessionStorage.setItem('zhiji-preview-backend', requestedBackend);
+}
+const backend = sessionStorage.getItem('zhiji-preview-backend') === 'onykia' ? 'onykia' : 'loligo';
+window.__ZHIJI_CONFIG__ = { API_URL: '/api', BACKEND: backend };
+const savedLocale = document.cookie.split('; ').find(cookie => cookie.startsWith(`${localeCookie}=`))?.slice(localeCookie.length + 1);
+createRoot(document.getElementById('root')!).render(<LocaleProvider initialLocale={resolveLocale(savedLocale)}><Preview /></LocaleProvider>);

@@ -1,0 +1,245 @@
+'use client';
+import { errorText } from '@/i18n/errors';
+
+import { useText } from '@/i18n/useText';
+import { localizeDisplay } from '@/i18n/text';
+
+import { ActionButton as Button } from '@/components/shared/ActionButton';
+
+
+import * as React from 'react';
+import { Input, Select } from '@schema/ui-kit';
+import { Tag } from '@/components/shared/Tag';
+
+import { AppModal } from '@/components/shared';
+import type { RelationType, AffectedStatus, PedigreeMember, Gender } from '../types';
+import { RELATION_CONFIG, AFFECTED_STATUS_CONFIG } from '../types';
+
+interface EditMemberModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSubmit: (memberId: string, updates: Partial<PedigreeMember>) => void | Promise<void>;
+  member: PedigreeMember | null;
+  existingMembers: PedigreeMember[];
+}
+
+const genderOptions = [
+  { value: 'male', label: '男' },
+  { value: 'female', label: '女' },
+  { value: 'unknown', label: '未知' },
+];
+
+const relationOptions = Object.entries(RELATION_CONFIG)
+  .map(([value, config]) => ({ value, label: config.label }));
+
+const affectedOptions = Object.entries(AFFECTED_STATUS_CONFIG)
+  .map(([value, config]) => ({ value, label: config.label }));
+
+// 用于表示"无/未知"的特殊值（Radix Select 不允许空字符串作为 value）
+const NONE_VALUE = '__none__';
+
+export function EditMemberModal({ isOpen, onClose, onSubmit, member, existingMembers }: EditMemberModalProps) {
+  const t = useText();
+  const [submitting, setSubmitting] = React.useState(false);
+  const [submitError, setSubmitError] = React.useState('');
+  const [formData, setFormData] = React.useState({
+    name: '',
+    gender: 'unknown' as Gender,
+    birthYear: '',
+    relation: 'other' as RelationType,
+    affectedStatus: 'unknown' as AffectedStatus,
+    fatherId: NONE_VALUE,
+    motherId: NONE_VALUE,
+    spouseIds: [] as string[],
+    phenotypes: '',
+    isDeceased: false,
+    deceasedYear: '',
+  });
+
+  // 从 member prop 初始化表单数据
+  React.useEffect(() => {
+    if (member) {
+      setSubmitError('');
+      setFormData({
+        name: member.name,
+        gender: member.gender,
+        birthYear: member.birthYear ? String(member.birthYear) : '',
+        relation: member.relation,
+        affectedStatus: member.affectedStatus,
+        fatherId: member.fatherId || NONE_VALUE,
+        motherId: member.motherId || NONE_VALUE,
+        spouseIds: member.spouseIds || [],
+        phenotypes: member.phenotypes ? member.phenotypes.join(', ') : '',
+        isDeceased: member.isDeceased || false,
+        deceasedYear: member.deceasedYear ? String(member.deceasedYear) : '',
+      });
+    }
+  }, [member]);
+
+  const handleChange = (field: string, value: string | boolean | string[]) => {
+    setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const addSpouse = (spouseId: string) => {
+    if (spouseId && spouseId !== NONE_VALUE && !formData.spouseIds.includes(spouseId)) {
+      setFormData(prev => ({ ...prev, spouseIds: [...prev.spouseIds, spouseId] }));
+    }
+  };
+
+  const removeSpouse = (spouseId: string) => {
+    setFormData(prev => ({ ...prev, spouseIds: prev.spouseIds.filter(id => id !== spouseId) }));
+  };
+
+  const handleSubmit = async (e: React.FormEvent | React.MouseEvent) => {
+    e.preventDefault();
+    if (!member || submitting) return;
+
+    setSubmitting(true);
+    setSubmitError('');
+    try {
+      await onSubmit(member.id, {
+        name: formData.name,
+        gender: formData.gender,
+        birthYear: formData.birthYear ? parseInt(formData.birthYear) : undefined,
+        relation: formData.relation,
+        affectedStatus: formData.affectedStatus,
+        fatherId: formData.fatherId === NONE_VALUE ? undefined : formData.fatherId,
+        motherId: formData.motherId === NONE_VALUE ? undefined : formData.motherId,
+        spouseIds: formData.spouseIds.length > 0 ? formData.spouseIds : undefined,
+        phenotypes: formData.phenotypes ? formData.phenotypes.split(',').map(s => s.trim()) : undefined,
+        isDeceased: formData.isDeceased,
+        deceasedYear: formData.isDeceased && formData.deceasedYear ? parseInt(formData.deceasedYear) : undefined,
+      });
+      onClose();
+    } catch (err) {
+      setSubmitError(err instanceof Error ? errorText(err, t) : t("samples.unableToUpdatePedigreeMember58c875"));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const getDescendants = (memberId: string): string[] => {
+    const descendants: string[] = [];
+    const children = existingMembers.filter(m => m.fatherId === memberId || m.motherId === memberId);
+    for (const child of children) {
+      descendants.push(child.id);
+      descendants.push(...getDescendants(child.id));
+    }
+    return descendants;
+  };
+
+  const excludeIds = member ? [member.id, ...getDescendants(member.id)] : [];
+
+  const maleMembers = existingMembers.filter(m => m.gender === 'male' && !excludeIds.includes(m.id));
+  const femaleMembers = existingMembers.filter(m => m.gender === 'female' && !excludeIds.includes(m.id));
+
+  const fatherOptions = [
+    { value: NONE_VALUE, label: t("samples.noneUnknowndfe4f4") },
+    ...maleMembers.map(m => ({ value: m.id, label: m.name })),
+  ];
+
+  const motherOptions = [
+    { value: NONE_VALUE, label: t("samples.noneUnknowndfe4f4") },
+    ...femaleMembers.map(m => ({ value: m.id, label: m.name })),
+  ];
+
+  // 配偶候选（排除自己、现有配偶、后代）
+  const spouseCandidates = existingMembers.filter(m =>
+    !excludeIds.includes(m.id) &&
+    !formData.spouseIds.includes(m.id)
+  );
+
+  const spouseOptions = [
+    { value: NONE_VALUE, label: t("samples.selectSpousefd701e") },
+    ...spouseCandidates.map(m => ({ value: m.id, label: `${m.name} (${m.gender === 'male' ? t("samples.male51625d") : m.gender === 'female' ? t("samples.female26bc84") : t("samples.unknownd9c32a")})` })),
+  ];
+
+  if (!member) return null;
+
+  return (
+    <AppModal
+      open={isOpen}
+      onOpenChange={(open) => !open && !submitting && onClose()}
+      title={t("samples.editMemberInformation399978")}
+      size="small"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={submitting}>{t("admin.cancel4d0b46")}</Button>
+          <Button action="save" variant="primary" onClick={(e: React.MouseEvent) => handleSubmit(e)} disabled={submitting}>{t("samples.saveChanges60b4ae")}</Button>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {submitError && (
+          <div className="rounded-md border border-danger-muted bg-danger-subtle px-3 py-2 text-sm text-danger-fg">
+            {submitError}
+          </div>
+        )}
+        <div>
+          <label className="block text-xs text-fg-muted mb-1">{t("samples.name2b9e1a")}</label>
+          <Input value={formData.name} onChange={(e) => handleChange('name', e.target.value)} placeholder={t("samples.enterName675b3e")} required />
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-fg-muted mb-1">{t("samples.sex42b5cc")}</label>
+            <Select value={formData.gender} onChange={(value) => handleChange('gender', Array.isArray(value) ? value[0] : value)} options={localizeDisplay(genderOptions, t)} />
+          </div>
+          <div>
+            <label className="block text-xs text-fg-muted mb-1">{t("samples.birthYear72da00")}</label>
+            <Input type="number" value={formData.birthYear} onChange={(e) => handleChange('birthYear', e.target.value)} placeholder={t("samples.forExampleb1ea60")} />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-fg-muted mb-1">{t("samples.relationshipToProbanda3aea6")}</label>
+            <Select value={formData.relation} onChange={(value) => handleChange('relation', Array.isArray(value) ? value[0] : value)} options={localizeDisplay(relationOptions, t)} />
+          </div>
+          <div>
+            <label className="block text-xs text-fg-muted mb-1">{t("samples.affectedStatus5332fa")}</label>
+            <Select value={formData.affectedStatus} onChange={(value) => handleChange('affectedStatus', Array.isArray(value) ? value[0] : value)} options={localizeDisplay(affectedOptions, t)} />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-fg-muted mb-1">{t("samples.father03cd61")}</label>
+            <Select value={formData.fatherId} onChange={(value) => handleChange('fatherId', Array.isArray(value) ? value[0] : value)} options={fatherOptions} />
+          </div>
+          <div>
+            <label className="block text-xs text-fg-muted mb-1">{t("samples.mother166846")}</label>
+            <Select value={formData.motherId} onChange={(value) => handleChange('motherId', Array.isArray(value) ? value[0] : value)} options={motherOptions} />
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs text-fg-muted mb-1">{t("samples.spouse38ef0f")}</label>
+          <div className="flex flex-wrap gap-1 mb-2">
+            {formData.spouseIds.map(sid => {
+              const spouse = existingMembers.find(m => m.id === sid);
+              return spouse ? (
+                <Tag key={sid} variant="neutral" closable onClose={() => removeSpouse(sid)}>{spouse.name}</Tag>
+              ) : null;
+            })}
+          </div>
+          {spouseCandidates.length > 0 && (
+            <Select value="" placeholder={t("samples.selectSpouse50709c")} onChange={(value) => addSpouse(Array.isArray(value) ? value[0] : value)} options={spouseOptions} />
+          )}
+        </div>
+        <div className="space-y-2">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={formData.isDeceased} onChange={(e) => handleChange('isDeceased', e.target.checked)} className="w-4 h-4 rounded border-border-default" />
+            <span className="text-sm text-fg-default">{t("samples.deceased03d11d")}</span>
+          </label>
+          {formData.isDeceased && (
+            <div>
+              <label className="block text-xs text-fg-muted mb-1">{t("samples.yearOfDeath157868")}</label>
+              <Input type="number" value={formData.deceasedYear} onChange={(e) => handleChange('deceasedYear', e.target.value)} placeholder={t("samples.forExample9d5092")} />
+            </div>
+          )}
+        </div>
+        <div>
+          <label className="block text-xs text-fg-muted mb-1">{t("samples.phenotypeDescriptionfa80fb")}</label>
+          <Input value={formData.phenotypes} onChange={(e) => handleChange('phenotypes', e.target.value)} placeholder={t("samples.separatePhenotypesWithCommase4c276")} />
+        </div>
+      </form>
+    </AppModal>
+  );
+}

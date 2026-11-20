@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 
-const STORAGE_KEY = 'somatic-sidebar-state';
+const STORAGE_KEY = 'germline-sidebar-state';
 
 interface SidebarState {
   collapsed: boolean;

@@ -1,0 +1,81 @@
+import { describe, expect, it, vi } from 'vitest';
+import { billingTransactionTaskId, summarizeTaskBilling, getBillingConfig, calculateEstimatedCredits, type BillingTransaction } from './billing';
+
+it('does not turn an approval credit grant user reference into a task link', () => {
+  const grant = { ...row(1, 'adjust', 500, 'approval'), reference_id: '7', billing_basis: 'registration_grant' };
+  expect(billingTransactionTaskId(grant)).toBeNull();
+  expect(grant.reference_id).toBe('7');
+  expect(billingTransactionTaskId({ ...grant, related_task_id: '7' })).toBeNull();
+});
+
+it('preserves computation and explicit AI task references', () => {
+  expect(billingTransactionTaskId(row(1, 'pre_deduction', -5, 'attempt', 'task_estimate'))).toBe('task');
+  const ai = { ...row(2, 'pre_deduction', -1, 'attempt'), reference_id: 'ai:request', billing_basis: 'ai_assistance' };
+  expect(billingTransactionTaskId(ai)).toBeNull();
+  expect(billingTransactionTaskId({ ...ai, related_task_id: 'task-uuid' })).toBe('task-uuid');
+});
+
+function row(id: number, type: string, amount: number, attempt: string, billing_basis?: string): BillingTransaction {
+  return { id, type, amount, reference_id: `task:${attempt}`, org_id: 'org', balance_after: 0,
+    created_by: 1, created_at: `2026-10-09T00:00:0${id}Z`, billing_basis };
+}
+
+describe('task reservations across retries', () => {
+  it('shows only the current retry while leaving the input ledger intact', () => {
+    const summary = summarizeTaskBilling('task', [row(3, 'pre_deduction', -77, 'new'),
+      row(2, 'failure_refund', 77, 'old'), row(1, 'pre_deduction', -77, 'old')]);
+    expect(summary).toMatchObject({ preDeducted: 77, deducted: 77, refunded: 0, netCost: 77, transactionCount: 1 });
+  });
+  it('does not show a reservation after a full failure refund', () => {
+    expect(summarizeTaskBilling('task', [row(1, 'pre_deduction', -77, 'old'),
+      row(2, 'failure_refund', 77, 'old')])).toMatchObject({ preDeducted: 0, netCost: 0 });
+  });
+  it('does not confuse an old delayed refund with the current attempt', () => {
+    expect(summarizeTaskBilling('task', [row(1, 'pre_deduction', -77, 'old'),
+      row(2, 'pre_deduction', -77, 'new'), row(3, 'failure_refund', 77, 'old')]).preDeducted).toBe(77);
+  });
+  it('shows the settled retry refund of 16, excluding the previous failure refund of 112', () => {
+    const ledger = [row(1, 'pre_deduction', -112, 'old', 'task_estimate'), row(2, 'failure_refund', 112, 'old', 'task_refund'),
+      row(3, 'deduction', -112, 'new', 'task_estimate'), row(4, 'refund', 16, 'new', 'task_settlement')];
+    expect(summarizeTaskBilling('task', [...ledger].reverse())).toMatchObject({preDeducted: 0, deducted: 112, refunded: 16, netCost: 96, transactionCount: 2});
+    expect(ledger).toHaveLength(4);
+  });
+  it('does not select a late additional settlement of an old attempt', () => {
+    expect(summarizeTaskBilling('task', [row(1, 'pre_deduction', -112, 'old'), row(2, 'pre_deduction', -112, 'new'),
+      row(3, 'deduction', -10, 'old', 'task_settlement'), row(4, 'failure_refund', 112, 'old')]))
+      .toMatchObject({preDeducted: 112, deducted: 112, refunded: 0, netCost: 112});
+  });
+  it.each([
+    [row(2, 'refund', 37, 'old'), 40],
+    [row(2, 'settlement', 0, 'old'), 77],
+    [row(2, 'deduction', -23, 'old', 'task_settlement'), 100],
+  ])('clears the reservation on terminal settlement', (settlement, netCost) => {
+    expect(summarizeTaskBilling('task', [row(1, 'pre_deduction', -77, 'old'), settlement]))
+      .toMatchObject({ preDeducted: 0, netCost });
+  });
+});
+
+vi.mock('./api', () => ({ api: { get: vi.fn() } }));
+
+it('reads uncached organization rates rather than the platform administrator baseline', async () => {
+  const { api } = await import('./api');
+  const config = { credits_per_minute: 1, credit_rate_multiplier: 2, download_credits: 1, min_balance: -20 };
+  vi.mocked(api.get).mockResolvedValueOnce(config);
+  expect(await getBillingConfig()).toEqual(config);
+  expect(api.get).toHaveBeenCalledWith('/v1/billing/effective-config', { coreApi: false, cache: 'no-store' });
+  expect(calculateEstimatedCredits(60, config)).toBe(120);
+});
+
+it('reserves exactly 50 credits for VCF annotation regardless of estimate and rate', () => {
+  for (const minutes of [1, 25, 60, 999]) {
+    expect(calculateEstimatedCredits(minutes, null, 'vcf2anno')).toBe(50);
+    expect(calculateEstimatedCredits(minutes, { credits_per_minute: 7, credit_rate_multiplier: 3 } as never, 'vcf2anno')).toBe(50);
+  }
+  expect(calculateEstimatedCredits(60, { credits_per_minute: 1, credit_rate_multiplier: 2 } as never, 'single')).toBe(120);
+});
+
+it('does not turn Stripe payment order references into task links', () => {
+ for (const billing_basis of ['stripe_payment', 'stripe_test_payment']) {
+  expect(billingTransactionTaskId({ ...row(9, 'recharge', 10, 'order-uuid', billing_basis), reference_id: 'order-uuid' })).toBeNull();
+ }
+});

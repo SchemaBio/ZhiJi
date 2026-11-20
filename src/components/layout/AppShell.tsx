@@ -1,16 +1,25 @@
 'use client';
+import { OperationScope } from '@/components/providers/BusinessPermissionProvider';
+import { permissionForPath } from '@/lib/permissions';
+import { useText } from '@/i18n/useText';
+import { chineseText, localizeDisplay, type TextTranslator } from '@/i18n/text';
+
 
 import * as React from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { Settings, Info, Shield } from 'lucide-react';
+import Image from 'next/image';
+import { Info, Menu, Settings, Shield, X } from 'lucide-react';
 import { Breadcrumb, type BreadcrumbItem } from '@schema/ui-kit';
 import { SidebarNav } from './SidebarNav';
 import { useSidebarState } from '@/hooks/useSidebarState';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { MobileNav } from './MobileNav';
+import { ResearchUseBadge } from '@/components/shared/ResearchPolicy';
+import { BillingDisplay } from '@/components/BillingDisplay';
 import { mainNavItems, sidebarNavConfig } from '@/config/navigation';
-import { AssistantButton } from '@/components/assistant';
+import { SupportDialog } from '@/components/support/SupportDialog';
+import { AnnouncementsProvider, AnnouncementButton, AnnouncementBanners } from '@/components/announcements/Announcements';
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -24,18 +33,22 @@ const pathLabelMap: Record<string, string> = {
   dashboard: '概览',
   samples: '样本管理',
   lab: '实验中心',
-  data: '数据中心',
-  tasks: '任务中心',
+  data: '数据管理',
   pipeline: '流程中心',
-  billing: '费用中心',
+  analysis: '分析中心',
   reports: '报告中心',
-  knowledge: '知识中心',
+  history: '历史检出',
+  tasks: '任务中心',
+  admin: '平台管理',
   settings: '系统设置',
   about: '关于',
   privacy: '隐私协议',
+  billing: '费用中心',
+  recharge: '充值',
   // 样本管理子页面
   new: '新建',
   import: '批量导入',
+  pedigree: '家系管理',
   // 实验中心子页面
   sequencers: '测序仪',
   // 数据管理子页面
@@ -55,14 +68,10 @@ const pathLabelMap: Record<string, string> = {
   // 报告中心子页面
   review: '待审核',
   released: '已发放',
-  // 知识中心子页面
-  history: '历史检出位点',
-  variants: '位点收录库',
   // 系统设置子页面
   permissions: '权限管理',
   ai: 'AI 设置',
-  // 管理中心
-  admin: '管理中心',
+  storage: '管理员设置',
 };
 
 /**
@@ -71,19 +80,19 @@ const pathLabelMap: Record<string, string> = {
 const defaultSubPageMap: Record<string, string> = {
   '/samples': '样本列表',
   '/lab': '上机表',
-  '/data': '数据文件',
+  '/data': '数据列表',
   '/pipeline': '流程列表',
+  '/analysis': '任务列表',
   '/tasks': '任务列表',
-  '/billing': '费用概览',
   '/reports': '报告列表',
-  '/knowledge': '知识库概览',
+  '/billing': '费用概览',
   '/settings': '个人设置',
 };
 
 /**
  * Generate breadcrumbs from pathname
  */
-function getBreadcrumbs(pathname: string): BreadcrumbItem[] {
+function getBreadcrumbs(pathname: string, t: TextTranslator = chineseText): BreadcrumbItem[] {
   const segments = pathname.split('/').filter(Boolean);
   if (segments.length === 0) return [];
 
@@ -94,14 +103,19 @@ function getBreadcrumbs(pathname: string): BreadcrumbItem[] {
     currentPath += `/${segment}`;
     // Find label from navigation config or path label map
     const navItem = mainNavItems.find(item => item.href === `/${segment}`);
-    const label = navItem?.label || pathLabelMap[segment] || segment;
-    items.push({ label, href: currentPath });
+    const detailLabel = currentPath.startsWith('/tasks/') && segment !== 'new'
+      ? t("common.taskInterpretation3d0bb1")
+      : currentPath.startsWith('/samples/') && !pathLabelMap[segment]
+        ? t("tasks.sampleDetailsb6d180")
+        : undefined;
+    const label = detailLabel || navItem?.label || pathLabelMap[segment] || segment;
+    items.push({ label: t(label), href: currentPath });
   }
 
   // 如果是一级路径，添加默认子页面标签
   const defaultSubPage = defaultSubPageMap[pathname];
   if (defaultSubPage) {
-    items.push({ label: defaultSubPage });
+    items.push({ label: t(defaultSubPage) });
   }
 
   // Last item should not have href (current page)
@@ -119,7 +133,16 @@ function getBreadcrumbs(pathname: string): BreadcrumbItem[] {
  */
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
+  return <OperationScope permission={permissionForPath(pathname)}><AnnouncementsProvider><AppShellContent>{children}</AppShellContent></AnnouncementsProvider></OperationScope>;
+}
+function AppShellContent({ children }: AppShellProps) {
+  const t = useText();
+  const pathname = usePathname();
+  const fixedTaskWorkspace = /^\/tasks\/[^/]+$/.test(pathname) || pathname === '/history';
   const { collapsed, setCollapsed } = useSidebarState();
+  const isTaskDetail = fixedTaskWorkspace && pathname.startsWith('/tasks/') && pathname !== '/tasks/new';
+  const [detailSidebar, setDetailSidebar] = React.useState<{ pathname: string; collapsed: boolean }>();
+  const detailCollapsed = detailSidebar?.pathname === pathname ? detailSidebar.collapsed : true;
   const isMobile = useMediaQuery('(max-width: 767px)');
   const isTablet = useMediaQuery('(min-width: 768px) and (max-width: 1279px)');
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
@@ -144,101 +167,94 @@ export function AppShell({ children }: AppShellProps) {
   }, [pathname]);
 
   // Generate breadcrumbs from pathname
-  const breadcrumbs = React.useMemo(() => getBreadcrumbs(pathname), [pathname]);
+  const breadcrumbs = React.useMemo(() => getBreadcrumbs(pathname, t), [pathname, t]);
 
   if (isMobile) {
     return (
-      <div className="min-h-screen flex flex-col bg-canvas">
+      <div className={`h-dvh overflow-hidden flex flex-col yj-modern yj-workspace`}>
         {/* Mobile Header */}
-        <header className="h-12 flex items-center justify-between px-4 border-b border-border bg-canvas-subtle">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-accent-emphasis rounded-md flex items-center justify-center">
-              <span className="text-fg-on-emphasis font-bold text-sm">🧬</span>
-            </div>
-            <span className="font-semibold text-fg-default">绳墨生物</span>
+        <header className="h-14 shrink-0 flex items-center justify-between px-3 sm:px-4 border-b border-[var(--yj-border-subtle)] bg-[var(--yj-panel-bg)]">
+          <div className="flex shrink-0 items-center gap-2">
+            <Image src="/logo.svg" alt={t("common.appName")} width={30} height={30} />
+            <span className="whitespace-nowrap font-semibold text-fg-default max-[420px]:hidden">{t("common.appName")}</span>
           </div>
-          <button
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="p-2 rounded-md hover:bg-canvas-inset"
-            aria-label="Toggle menu"
-          >
-            <svg
-              className="w-5 h-5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
+          <div className="flex items-center gap-0">
+            <ResearchUseBadge /><BillingDisplay compact />
+            <AnnouncementButton /><SupportDialog />
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="p-2 rounded-md hover:bg-canvas-inset"
+              aria-label={mobileMenuOpen ? t("common.closeMenu82baef") : t("common.openMenu065c3a")}
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d={mobileMenuOpen ? 'M6 18L18 6M6 6l12 12' : 'M4 6h16M4 12h16M4 18h16'}
-              />
-            </svg>
-          </button>
+              {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            </button>
+          </div>
         </header>
+        <AnnouncementBanners />
         {mobileMenuOpen && (
           <MobileNav
             currentSection={currentSection}
             onClose={() => setMobileMenuOpen(false)}
           />
         )}
-        <main className="flex-1 overflow-auto">{children}</main>
-        <AssistantButton />
+        <main className={`flex min-h-0 flex-1 flex-col ${fixedTaskWorkspace ? 'overflow-hidden' : 'overflow-auto'}`}>{children}</main>
       </div>
     );
   }
 
   return (
-    <div className="h-screen flex bg-canvas">
+    <div className="yj-modern h-dvh overflow-hidden flex yj-workspace text-fg-default">
       {/* Sidebar */}
       <SidebarNav
-        collapsed={collapsed}
-        onCollapsedChange={setCollapsed}
+        collapsed={isTaskDetail ? detailCollapsed : collapsed}
+        onCollapsedChange={isTaskDetail ? collapsed => setDetailSidebar({ pathname, collapsed }) : setCollapsed}
       />
 
       {/* Main Area */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-h-0 min-w-0">
         {/* Top Bar */}
-        <header className="h-12 flex items-center justify-between px-4 border-b border-border bg-canvas shrink-0">
+        <header className="h-14 flex items-center justify-between px-5 border-b border-[var(--yj-border-subtle)] bg-[var(--yj-panel-bg)] shrink-0">
           {/* Left: Breadcrumbs */}
           <div className="flex-1 min-w-0">
-            {breadcrumbs.length > 0 && <Breadcrumb items={breadcrumbs} />}
+            {breadcrumbs.length > 0 && <Breadcrumb items={localizeDisplay(breadcrumbs, t)} />}
           </div>
 
-          {/* Right: Settings + About + Privacy */}
-          <div className="flex items-center gap-2 shrink-0">
+          {/* Right: Settings + About */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <ResearchUseBadge /><BillingDisplay />
+            <AnnouncementButton /><SupportDialog />
             <Link
               href="/settings"
-              className="p-2 rounded-md text-fg-muted hover:text-fg-default hover:bg-canvas-inset transition-colors"
-              aria-label="系统设置"
+              className="p-2 rounded-md text-fg-muted hover:text-fg-default hover:bg-[var(--yj-panel-muted)] transition-colors"
+              aria-label={t("common.systemSettingse976ea")}
             >
               <Settings className="w-5 h-5" />
             </Link>
             <Link
               href="/about"
-              className="p-2 rounded-md text-fg-muted hover:text-fg-default hover:bg-canvas-inset transition-colors"
-              aria-label="关于"
+              className="p-2 rounded-md text-fg-muted hover:text-fg-default hover:bg-[var(--yj-panel-muted)] transition-colors"
+              aria-label={t("common.aboutbed172")}
             >
               <Info className="w-5 h-5" />
             </Link>
             <Link
               href="/privacy"
-              className="p-2 rounded-md text-fg-muted hover:text-fg-default hover:bg-canvas-inset transition-colors"
-              aria-label="隐私协议"
+              className="p-2 rounded-md text-fg-muted hover:text-fg-default hover:bg-[var(--yj-panel-muted)] transition-colors"
+              aria-label={t("common.privacyNotice9877b3")}
             >
               <Shield className="w-5 h-5" />
             </Link>
           </div>
         </header>
 
+        <AnnouncementBanners />
         {/* Main Content */}
-        <main className="flex-1 overflow-auto">
+        <main className={`flex min-h-0 flex-1 flex-col bg-[var(--yj-workspace-bg)] ${fixedTaskWorkspace ? 'overflow-hidden' : 'overflow-auto'}`}>
+
           {children}
         </main>
       </div>
 
-      <AssistantButton />
     </div>
   );
 }

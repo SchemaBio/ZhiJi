@@ -1,241 +1,632 @@
 'use client';
+import { pipelineDisplayName } from '@/lib/builtin-resources';
+import { TaskProgressCell } from '@/components/shared/TaskProgressCell';
+import { MobileRecordList } from '@/components/shared/MobileRecordList';
+import { ExampleBadge } from '@/components/shared/ExampleData';
+import {canEditTask} from '@/lib/task-editing';
+import { downloadTaskBatchTemplate } from '@/lib/task-batch-template';
+import { useLiveRetention, useResearchExpiry } from '@/lib/research-retention';
+import { errorText } from '@/i18n/errors';
 
+import { useText } from '@/i18n/useText';
+import { translateUI, localizeDisplay } from '@/i18n/text';
+
+import { canInterpretTask } from '@/lib/task-interpretation';
+import { TaskActionsCell } from './components/TaskActionsCell';
+import { ActionButton as Button } from '@/components/shared/ActionButton';
+
+import { taskStatusConfig, taskDisplayCreatedAt, taskDisplayStatus, sortTasksByInterpretation, taskStatusClass, type TaskDisplayStatus } from '@/lib/task-presentation';
+import { HoverHint } from '@/components/shared/HoverHint';
+
+
+import { RetentionNotice, ExpiryCell } from '@/components/shared/ResearchPolicy';
 import * as React from 'react';
-import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
-import { Button, Input, Select } from '@schema/ui-kit';
-import { PageContent } from '@/components/layout';
-import { tasksApi } from '@/lib/tasks';
-import { listSamples } from '@/lib/samples';
-import { listPipelines, type Pipeline } from '@/lib/pipelines';
-import { taskDisplayCreatedAt, taskDisplayStatus, taskStatusConfig } from '@/lib/task-presentation';
+import { useRouter } from 'next/navigation';
+import * as PopoverPrimitive from '@radix-ui/react-popover';
+import { Input, DataTable, Tooltip } from '@schema/ui-kit';
+import { Tag } from '@/components/shared/Tag';
+import type { Column } from '@schema/ui-kit';
+import { Search, ChevronDown, Loader2, AlertTriangle, List } from 'lucide-react';
+import { NewTaskModal, BatchTaskModal, EditTaskModal } from './components';
+import type { NewTaskFormData, EditTaskFormData } from './components';
 import type { AnalysisTask } from '@/types/task';
-import type { Sample } from '@/app/(main)/samples/types';
+import { tasksApi } from '@/lib/tasks';
+import { useApi, usePolling } from '@/hooks';
+import { EmptyState, IdCell, TaskStatusTag } from '@/components/shared';
+import { TaskCostValue } from '@/components/billing';
+import { getRecentTaskBilling, notifyBillingUpdated, type TaskBillingSummary } from '@/lib/billing';
+import { getRuntimeBackendFlavor } from '@/lib/runtime-config';
+import { formatLocalDateTime } from '@/lib/utils';
 
-const STATUS_OPTIONS = [
+const executionReasons: Record<string, string> = { ORGANIZATION_INACTIVE: '组织已停用', ADMISSION_REJECTED: '执行申请未通过，请检查余额', DISPATCH_FAILED: '执行申请未确认，系统正在对账', BOOTSTRAP_FAILED: '节点初始化失败', AGENT_EXITED: '节点 Agent 意外退出', MAX_RUNTIME: '超过运行时限', LEGACY_RECONCILIATION_REQUIRED: '等待管理员核对', RELEASE_RETRY: '节点释放正在重试', RELEASE_FAILED: '节点释放失败，需要管理员处理', SEPIIDA_FIRST_REPORT_TIMEOUT: 'Sepiida 未按时收到任务进度', NODE_FIRST_REPORT_TIMEOUT: '节点首报超时', NODE_HEARTBEAT_TIMEOUT: '节点心跳中断超过 5 分钟', NODE_INITIALIZATION_TIMEOUT: '节点初始化超过 60 分钟', NODE_CALLBACK_AUTH_FAILED: '节点状态关注鉴权失败', NODE_CALLBACK_RATE_LIMITED: '节点状态关注被限流', NODE_CALLBACK_UPSTREAM_ERROR: '节点状态服务暂时异常', NODE_DNS_FAILED: '节点无法解析状态服务域名', NODE_TLS_FAILED: '节点 TLS 连接失败', BOOTSTRAP_DEPENDENCY_MISSING: '节点镜像缺少启动依赖', REFERENCE_DATABASE_FAILED: '参考数据库准备失败', INPUT_DOWNLOAD_FAILED: '输入文件下载失败', AGENT_START_FAILED: 'Sepiida Agent 启动失败' };
+const executionLabels: Record<string, string> = { waiting_quota: '等待名额', waiting_capacity: '等待节点', dispatching: '申请确认中', bootstrapping: '初始化中', diagnostic_hold: '诊断日志保留中', running: '计算中', archiving: '归档中', terminating: '节点释放中', release_failed: '节点释放重试中', terminal: '本次执行已结束' };
+
+const statusConfig = taskStatusConfig;
+
+const statusFilterOptions = [
   { value: 'all', label: '全部状态' },
   { value: 'queued', label: '排队中' },
   { value: 'running', label: '运行中' },
   { value: 'pending_interpretation', label: '待解读' },
   { value: 'completed', label: '分析完成' },
+  { value: 'interpretation_completed', label: '解读完成' },
   { value: 'failed', label: '失败' },
 ];
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : '请求失败';
+function areTaskListsEqual(previous: AnalysisTask[], next: AnalysisTask[]): boolean {
+  return previous.length === next.length && previous.every((task, index) => {
+    const candidate = next[index];
+    return task.id === candidate.id
+      && task.name === candidate.name
+      && task.sampleId === candidate.sampleId
+      && task.internalId === candidate.internalId
+      && task.template === candidate.template
+      && task.pipeline === candidate.pipeline
+      && task.pipelineId === candidate.pipelineId
+      && task.pipelineVersion === candidate.pipelineVersion
+      && task.status === candidate.status
+      && task.interpretationCompletedAt === candidate.interpretationCompletedAt
+      && task.vmStatus === candidate.vmStatus
+      && task.executionPhase === candidate.executionPhase
+      && task.executionReasonCode === candidate.executionReasonCode
+      && task.attemptId === candidate.attemptId
+      && task.phaseUpdatedAt === candidate.phaseUpdatedAt
+      && task.bootstrapPhase === candidate.bootstrapPhase
+      && task.bootstrapLastHeartbeatAt === candidate.bootstrapLastHeartbeatAt
+      && task.diagnosticHoldUntil === candidate.diagnosticHoldUntil
+      && task.diagnosticSummary === candidate.diagnosticSummary
+      && task.dispatchNextRetryAt === candidate.dispatchNextRetryAt
+      && task.dispatchRetryDeadlineAt === candidate.dispatchRetryDeadlineAt
+      && task.dispatchRetryCount === candidate.dispatchRetryCount
+      && task.resultImportStatus === candidate.resultImportStatus
+      && task.progress === candidate.progress
+      && task.createdAt === candidate.createdAt
+      && task.retryStartedAt === candidate.retryStartedAt
+      && task.createdBy === candidate.createdBy
+      && task.completedAt === candidate.completedAt
+      && task.remark === candidate.remark;
+  });
 }
 
-export default function TasksPage() {
-  return (
-    <React.Suspense fallback={<PageContent><p className="text-sm text-fg-muted">正在读取任务…</p></PageContent>}>
-      <TasksPageContent />
-    </React.Suspense>
-  );
-}
+// 状态筛选下拉组件
+function StatusFilterDropdown({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const t = useText();
+  const [isOpen, setIsOpen] = React.useState(false);
+  const dropdownRef = React.useRef<HTMLDivElement>(null);
 
-function TasksPageContent() {
-  const params = useSearchParams();
-  const initialStatus = params.get('status') || 'all';
-  const [status, setStatus] = React.useState(initialStatus);
-  const [search, setSearch] = React.useState('');
-  const [tasks, setTasks] = React.useState<AnalysisTask[]>([]);
-  const [error, setError] = React.useState('');
-  const [loading, setLoading] = React.useState(true);
-  const [creating, setCreating] = React.useState(false);
-  const [editing, setEditing] = React.useState<AnalysisTask | null>(null);
-
-  const load = React.useCallback(async () => {
-    try {
-      const page = await tasksApi.list({ status, search, page: 1, page_size: 50 });
-      setTasks(page.items);
-      setError('');
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [search, status]);
-
+  // 点击外部关闭下拉
   React.useEffect(() => {
-    void load();
-    const timer = window.setInterval(() => { void load(); }, 5000);
-    return () => window.clearInterval(timer);
-  }, [load]);
-
-  const act = async (work: () => Promise<unknown>) => {
-    try {
-      await work();
-      await load();
-    } catch (err) {
-      setError(errorMessage(err));
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
     }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
+
+  // 获取当前选中项的显示
+  const getCurrentDisplay = () => {
+    if (value === 'all') {
+      return <span className="text-sm text-fg-default">{t("tasks.allStatuses1a4c26")}</span>;
+    }
+    const config = statusConfig[value as TaskDisplayStatus];
+    return <Tag variant={config.variant} className={`justify-center yj-task-status-tag ${taskStatusClass(value as TaskDisplayStatus)}`}>{translateUI(config.label, t)}</Tag>;
   };
 
   return (
-    <PageContent>
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="text-lg font-medium text-fg-default">任务中心</h2>
-        <Button variant="primary" onClick={() => setCreating(true)}>新建任务</Button>
-      </div>
-      <div className="mb-4 flex flex-wrap gap-2">
-        <div className="w-64">
-          <Input value={search} placeholder="搜索任务或样本" onChange={(event) => setSearch(event.target.value)} />
+    <div className="relative" ref={dropdownRef}>
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        aria-expanded={isOpen}
+        className="flex items-center gap-2 px-3 py-1.5 border border-border-default rounded bg-canvas-default hover:bg-canvas-inset transition-colors"
+      >
+        {getCurrentDisplay()}
+        <ChevronDown className={`w-4 h-4 text-fg-muted transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+
+      {isOpen && (
+        <div className="absolute left-0 top-full mt-1 bg-canvas-default border border-border-default rounded-md shadow-lg z-30 py-1 min-w-[120px]">
+          {/* 全部状态选项 */}
+          <button
+            className={`w-full px-3 py-2 text-left text-sm hover:bg-canvas-subtle flex items-center gap-2 ${
+              value === 'all' ? 'bg-canvas-inset' : ''
+            }`}
+            onClick={() => {
+              onChange('all');
+              setIsOpen(false);
+            }}
+          >
+            <span className="text-fg-default">{t("tasks.allStatuses1a4c26")}</span>
+          </button>
+
+          {/* 各状态选项 */}
+          {statusFilterOptions.filter(opt => opt.value !== 'all').map((option) => {
+            const config = statusConfig[option.value as TaskDisplayStatus];
+            const isSelected = value === option.value;
+            return (
+              <button
+                key={option.value}
+                className={`w-full px-3 py-2 text-left hover:bg-canvas-subtle flex items-center gap-2 ${
+                  isSelected ? 'bg-canvas-inset' : ''
+                }`}
+                onClick={() => {
+                  onChange(option.value);
+                  setIsOpen(false);
+                }}
+              >
+                <Tag variant={config.variant} className={`justify-center yj-task-status-tag ${taskStatusClass(option.value as TaskDisplayStatus)}`}>{translateUI(config.label, t)}</Tag>
+              </button>
+            );
+          })}
         </div>
-        <div className="w-40">
-          <Select value={status} options={STATUS_OPTIONS} onChange={(value) => setStatus(Array.isArray(value) ? value[0] : value)} />
-        </div>
-      </div>
-      {error && <p className="mb-3 text-sm text-danger-fg">{error}</p>}
-      {loading && <p className="mb-3 text-sm text-fg-muted">正在读取任务…</p>}
-      <div className="overflow-x-auto border border-border rounded-md">
-        <table className="w-full text-sm">
-          <thead className="bg-canvas-subtle text-left text-fg-muted">
-            <tr>
-              <th className="px-3 py-2">任务</th>
-              <th className="px-3 py-2">样本</th>
-              <th className="px-3 py-2">流程</th>
-              <th className="px-3 py-2">状态</th>
-              <th className="px-3 py-2">进度</th>
-              <th className="px-3 py-2">创建</th>
-              <th className="px-3 py-2">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {tasks.length === 0 && !loading && <tr><td colSpan={7} className="px-3 py-6 text-fg-muted">没有任务</td></tr>}
-            {tasks.map((task) => {
-              const display = taskStatusConfig[taskDisplayStatus(task)];
-              return (
-                <tr key={task.id} className="border-t border-border">
-                  <td className="px-3 py-2"><Link className="text-accent-fg hover:underline" href={`/tasks/${task.id}`}>{task.name || task.id.slice(0, 8)}</Link></td>
-                  <td className="px-3 py-2">{task.internalId || task.sampleId}</td>
-                  <td className="px-3 py-2">{task.pipeline} {task.pipelineVersion}</td>
-                  <td className="px-3 py-2">{display.label}{task.executionPhase ? ` · ${task.executionPhase}` : ''}</td>
-                  <td className="px-3 py-2">{task.progress}%</td>
-                  <td className="px-3 py-2">{taskDisplayCreatedAt(task)}</td>
-                  <td className="px-3 py-2 space-x-2">
-                    <button type="button" className="text-accent-fg" onClick={() => setEditing(task)}>编辑</button>
-                    {task.status === 'failed' && <button type="button" className="text-accent-fg" onClick={() => void act(() => tasksApi.retry(task.id))}>重试</button>}
-                    {task.status === 'queued' && <button type="button" className="text-accent-fg" onClick={() => void act(() => tasksApi.start(task.id))}>启动</button>}
-                    {(task.status === 'queued' || task.status === 'running') && <button type="button" className="text-danger-fg" onClick={() => void act(() => tasksApi.cancel(task.id))}>取消</button>}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      {creating && <CreateTaskModal onClose={() => setCreating(false)} onCreated={() => { setCreating(false); void load(); }} />}
-      {editing && (
-        <EditTaskModal
-          task={editing}
-          onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); void load(); }}
-        />
       )}
-    </PageContent>
+    </div>
   );
 }
 
-function CreateTaskModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [samples, setSamples] = React.useState<Sample[]>([]);
-  const [pipelines, setPipelines] = React.useState<Pipeline[]>([]);
-  const [sampleId, setSampleId] = React.useState('');
-  const [pipelineId, setPipelineId] = React.useState('');
-  const [remark, setRemark] = React.useState('');
-  const [error, setError] = React.useState('');
+export default function AnalysisPage() {
+  const t = useText();
+  const router = useRouter();
+  const isSaaS = getRuntimeBackendFlavor() === 'onykia';
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const [statusFilter, setStatusFilter] = React.useState('all');
+  const [recentCounts, setRecentCounts] = React.useState<Record<string, number>>({});
+  const [actionLoading, setActionLoading] = React.useState<string | null>(null);
+  const [isNewTaskModalOpen, setIsNewTaskModalOpen] = React.useState(false);
+  const [isBatchTaskModalOpen, setIsBatchTaskModalOpen] = React.useState(false);
+  const [editingTask, setEditingTask] = React.useState<AnalysisTask | null>(null);
+  useResearchExpiry(editingTask?.expiresAt,()=>setEditingTask(null));
+  const [actionError, setActionError] = React.useState('');
+  const [taskBilling, setTaskBilling] = React.useState<Record<string, TaskBillingSummary>>({});
+  const [billingLoading, setBillingLoading] = React.useState(false);
 
-  React.useEffect(() => {
-    Promise.all([listSamples(), listPipelines()]).then(([nextSamples, nextPipelines]) => {
-      setSamples(nextSamples);
-      setPipelines(nextPipelines);
-      setSampleId(nextSamples[0]?.id ?? '');
-      setPipelineId(nextPipelines[0]?.id ?? '');
-    }).catch((err: unknown) => setError(errorMessage(err)));
-  }, []);
+  // Create fetcher function with current statusFilter
+  const fetcher = React.useCallback(async () => {
+    const params: Record<string, string> = { page: '1', page_size: '100' };
+    if (statusFilter !== 'all' && !['preparing_results', 'import_failed', 'interpretation_completed'].includes(statusFilter)) params.status = statusFilter;
+    const data = await tasksApi.list(params);
+    if (statusFilter === 'all') {
+      const counts: Record<string, number> = { all: data.items.length };
+      for (const task of data.items) counts[taskDisplayStatus(task)] = (counts[taskDisplayStatus(task)] ?? 0) + 1;
+      setRecentCounts(counts);
+    }
+    return data.items;
+  }, [statusFilter]);
 
-  const submit = async () => {
-    const sample = samples.find((item) => item.id === sampleId);
-    const pipeline = pipelines.find((item) => item.id === pipelineId);
-    if (!sample || !pipeline) {
-      setError('请选择样本和流程');
+  // Use polling hook - auto-polls when there are running tasks
+  const { data: fetchedTasks, loading, error, refetch } = usePolling(
+    fetcher,
+    10000,
+    { enabled: true, immediate: true, isEqual: areTaskListsEqual }
+  );
+
+  const tasks=useLiveRetention(fetchedTasks);
+  React.useEffect(()=>{setEditingTask(current=>{
+    if(!current)return current;
+    const latest=tasks.find(task=>task.id===current.id);
+    return latest&&!canEditTask(latest)?null:current;
+  });},[tasks]);
+  const refreshTaskBilling = React.useCallback(async (taskItems: AnalysisTask[]) => {
+    if (!isSaaS || taskItems.length === 0) {
+      setTaskBilling({});
       return;
     }
+    setBillingLoading(true);
+    try {
+      setTaskBilling(await getRecentTaskBilling(taskItems.map((task) => task.id)));
+    } catch {
+      setTaskBilling({});
+    } finally {
+      setBillingLoading(false);
+    }
+  }, [isSaaS]);
+
+  React.useEffect(() => {
+    void refreshTaskBilling(tasks ?? []);
+  }, [refreshTaskBilling, tasks]);
+
+  const handleCreateTask = async (data: NewTaskFormData) => {
+    setActionError('');
     try {
       await tasksApi.create({
-        sampleId: sample.id,
-        internalId: sample.internalId,
-        pipelineId: pipeline.id,
-        pipelineName: pipeline.name,
-        pipelineVersion: pipeline.version,
-        remark,
+        sampleId: data.sampleId,
+        internalId: data.internalId,
+        pipelineId: data.pipelineId,
+        pipelineName: data.pipelineName,
+        pipelineVersion: data.pipelineVersion,
+        remark: data.remark,
+        template: data.template,
+        inputs: data.inputs,
+ vcf_asset_id: data.vcf_asset_id, vcf_sample_name: data.vcf_sample_name,
       });
-      onCreated();
+      refetch(); // Refresh data after creating
     } catch (err) {
-      setError(errorMessage(err));
+      const message = err instanceof Error ? errorText(err, t) : t("interface.failedToCreateTaska23940");
+      setActionError(message);
+      throw new Error(message);
     }
   };
 
-  return (
-    <Modal title="新建任务" onClose={onClose}>
-      {error && <p className="mb-2 text-sm text-danger-fg">{error}</p>}
-      <label className="mb-3 block text-sm">样本
-        <Select value={sampleId} options={samples.map((sample) => ({ value: sample.id, label: sample.internalId || sample.id }))} onChange={(value) => setSampleId(Array.isArray(value) ? value[0] : value)} />
-      </label>
-      <label className="mb-3 block text-sm">流程
-        <Select value={pipelineId} options={pipelines.map((pipeline) => ({ value: pipeline.id, label: `${pipeline.name} ${pipeline.version}` }))} onChange={(value) => setPipelineId(Array.isArray(value) ? value[0] : value)} />
-      </label>
-      <label className="mb-3 block text-sm">备注
-        <Input value={remark} onChange={(event) => setRemark(event.target.value)} />
-      </label>
-      <div className="flex justify-end gap-2">
-        <Button variant="secondary" onClick={onClose}>取消</Button>
-        <Button variant="primary" onClick={() => void submit()}>创建</Button>
-      </div>
-    </Modal>
-  );
-}
-
-function EditTaskModal({ task, onClose, onSaved }: { task: AnalysisTask; onClose: () => void; onSaved: () => void }) {
-  const [internalId, setInternalId] = React.useState(task.internalId);
-  const [remark, setRemark] = React.useState(task.remark ?? '');
-  const [error, setError] = React.useState('');
-
-  const submit = async () => {
+  const handleEditTask = async (id: string, data: EditTaskFormData) => {
+    setActionError('');
+    const latest=tasks.find(task=>task.id===id);
+    if(latest&&!canEditTask(latest))throw new Error(t('tasks.onlyFailedOrQueuedEditable'));
     try {
-      await tasksApi.update(task.id, { internalId, pipeline: task.pipeline, remark });
-      onSaved();
+      await tasksApi.update(id, {
+        internalId: data.internalId,
+        pipeline: data.pipeline,
+        remark: data.remark,
+      });
+      refetch(); // Refresh data after updating
     } catch (err) {
-      setError(errorMessage(err));
+      const message = err instanceof Error ? errorText(err, t) : t("interface.failedToUpdateTaskf9b5e6");
+      setActionError(message);
+      throw new Error(message);
     }
   };
 
-  return (
-    <Modal title="编辑任务" onClose={onClose}>
-      {error && <p className="mb-2 text-sm text-danger-fg">{error}</p>}
-      <label className="mb-3 block text-sm">内部编号
-        <Input value={internalId} onChange={(event) => setInternalId(event.target.value)} />
-      </label>
-      <label className="mb-3 block text-sm">备注
-        <Input value={remark} onChange={(event) => setRemark(event.target.value)} />
-      </label>
-      <div className="flex justify-end gap-2">
-        <Button variant="secondary" onClick={onClose}>取消</Button>
-        <Button variant="primary" onClick={() => void submit()}>保存</Button>
-      </div>
-    </Modal>
-  );
-}
+  const handleStartTask = async (taskId: string) => {
+    setActionLoading(taskId);
+    setActionError('');
+    try {
+      await tasksApi.start(taskId);
+      notifyBillingUpdated();
+      await refreshTaskBilling(tasks ?? []);
+      refetch(); // Refresh data after starting
+    } catch (err) {
+      setActionError(err instanceof Error ? errorText(err, t) : t("tasks.unableToStartTask2f67d1"));
+    } finally {
+      setActionLoading(null);
+    }
+  };
 
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-md bg-canvas p-4 shadow-lg" role="dialog" aria-modal="true" aria-label={title}>
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-base font-medium">{title}</h3>
-          <button type="button" onClick={onClose} aria-label="关闭">×</button>
+  const handleStopTask = async (taskId: string) => {
+    setActionLoading(taskId);
+    setActionError('');
+    try {
+      await tasksApi.stop(taskId);
+      refetch(); // Refresh data after stopping
+    } catch (err) {
+      setActionError(err instanceof Error ? errorText(err, t) : t("tasks.unableToStopTaskb0cdcf"));
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleRetryTask = async (taskId: string) => {
+    setActionLoading(taskId);
+    setActionError('');
+    try {
+      await tasksApi.retry(taskId);
+      notifyBillingUpdated();
+      await refreshTaskBilling(tasks ?? []);
+      refetch(); // Refresh data after retrying
+    } catch (err) {
+      setActionError(err instanceof Error ? errorText(err, t) : t("tasks.unableToRetryTaska0acb1"));
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDeleteTask = async (taskId: string) => {
+    setActionError('');
+    try {
+      await tasksApi.cancel(taskId);
+      notifyBillingUpdated();
+      await refreshTaskBilling(tasks ?? []);
+      refetch(); // Refresh data after deleting
+    } catch (err) {
+      setActionError(err instanceof Error ? errorText(err, t) : t("tasks.unableToDeleteTaskb29722"));
+    }
+  };
+
+  const handleOpenDetails = React.useCallback((task: AnalysisTask) => {
+    if (!canInterpretTask(task)) return;
+    router.push(`/tasks/${encodeURIComponent(task.id)}`);
+  }, [router]);
+
+  const handleOpenInterpretation = React.useCallback((task: AnalysisTask) => {
+    if (!canInterpretTask(task)) return;
+    router.push(`/tasks/${encodeURIComponent(task.id)}?tab=overview`);
+  }, [router]);
+
+  const filteredTasks = React.useMemo(() => {
+    let result = tasks ?? [];
+    // 先按状态筛选
+    if (statusFilter !== 'all') {
+      result = result.filter(t => taskDisplayStatus(t) === statusFilter);
+    }
+    // 再按搜索词筛选
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(
+        (taskItem) =>
+          (taskItem.name ?? '').toLowerCase().includes(query) ||
+          pipelineDisplayName(taskItem.pipelineId ?? '', taskItem.name || taskItem.pipeline, t).toLowerCase().includes(query) ||
+          taskItem.pipeline.toLowerCase().includes(query) ||
+          taskItem.id.toLowerCase().includes(query) ||
+          taskItem.sampleId.toLowerCase().includes(query) ||
+          taskItem.internalId.toLowerCase().includes(query)
+      );
+    }
+    return sortTasksByInterpretation(result);
+  }, [searchQuery, statusFilter, tasks, t]);
+
+  const columns: Column<AnalysisTask>[] = [
+    ...(isSaaS ? [{id:'expiresAt',header:t('research.expiresAt'),accessor:(row:AnalysisTask)=><ExpiryCell value={row.expiresAt} />,width:170}] : []),
+    {
+      id: 'taskId',
+      header: t("admin.task3172b3"),
+      accessor: (row) => {
+        const title = pipelineDisplayName(row.pipelineId ?? '', row.name || row.pipeline, t) || t("samples.analysisTasksf269c8");
+        return (
+          <div className="min-w-0 text-left [&_button]:max-w-full [&_button]:truncate">
+            <IdCell id={row.id} full />
+            <div className="mt-1">
+              <HoverHint content={title}>
+                <button type="button" onClick={() => handleOpenDetails(row)} className="block max-w-[220px] truncate text-xs text-fg-muted hover:text-accent-fg">
+                  {title}
+                </button>
+              </HoverHint>
+            </div>
+          </div>
+        );
+      },
+      width: 158,
+      align: 'left',
+    },
+    {
+      id: 'sample',
+      header: t("history.sampleId6d686e"),
+      accessor: (row) => (
+        <div className="flex min-w-0 flex-col items-center gap-0.5 [&_button]:max-w-full [&_button]:truncate">
+          <span className="max-w-full break-all text-sm font-medium text-fg-default">{row.internalId || '-'}<ExampleBadge origin={row.origin} /></span>
+          <IdCell id={row.sampleId} full />
         </div>
-        {children}
-      </div>
+      ),
+      width: 148,
+      align: 'center',
+    },
+    {
+      id: 'pipeline',
+      header: t("tasks.analysisPipelinef22c14"),
+      accessor: (row) => (
+        <div className="break-words text-center">
+          <div className="text-fg-default">{pipelineDisplayName(row.pipelineId ?? '', row.pipeline, t)}</div>
+          <div className="text-xs text-fg-muted">{row.pipelineVersion}</div>
+        </div>
+      ),
+      width: 112,
+      align: 'center',
+    },
+    {
+      id: 'status',
+      header: t("admin.status62e951"),
+      accessor: (row) => {
+        const config = statusConfig[taskDisplayStatus(row)];
+        const terminalStatus = ['completed', 'failed', 'cancelled'].includes(row.status);
+        const phaseLabel = row.executionPhase ? executionLabels[row.executionPhase] : undefined;
+        const cleanupPhase = terminalStatus && ['terminating', 'release_failed'].includes(row.executionPhase ?? '');
+        const vmStatus = row.vmStatus?.toUpperCase();
+        const releaseConfirmed = row.executionPhase === 'terminal' && ['TERMINATED', 'RECLAIMED'].includes(vmStatus ?? '');
+        const label = config.label;
+        const releaseLabel = cleanupPhase
+          ? phaseLabel
+          : releaseConfirmed
+            ? row.status === 'completed' ? undefined : t("tasks.nodeReleased3f8287")
+            : row.executionPhase === 'terminal' && vmStatus === 'LAUNCH_FAILED'
+              ? t("tasks.noComputeNodeCreatedacf8b0")
+              : undefined;
+        const duplicateReleaseReason = cleanupPhase && ['RELEASE_RETRY', 'RELEASE_FAILED'].includes(row.executionReasonCode ?? '');
+        return <HoverHint content={translateUI(row.executionReasonCode ? executionReasons[row.executionReasonCode] ?? t("tasks.viewTaskDetails8132d3") : undefined, t)}><div ><span className={`yj-task-state-label ${taskStatusClass(taskDisplayStatus(row))}`} data-interpretation-completed={!!row.interpretationCompletedAt} data-status={taskDisplayStatus(row)}><span aria-hidden="true" />{t(label)}</span>{!terminalStatus && row.executionPhase !== 'terminal' && phaseLabel && phaseLabel !== config.label && <div className="text-xs text-fg-muted">{t(phaseLabel)}</div>}{releaseLabel && <div className={`text-xs ${row.executionPhase === 'release_failed' ? 'text-danger-fg' : row.executionPhase === 'terminating' ? 'text-warning-fg' : 'text-fg-muted'}`}>{t(releaseLabel)}</div>}{row.diagnosticHoldUntil && <div className="text-xs text-warning-fg">{t("tasks.retainedUntil028411")}{new Date(row.diagnosticHoldUntil).toLocaleTimeString(t.locale, { hour12: false })}</div>}{row.executionReasonCode && !duplicateReleaseReason && <div className="text-xs text-fg-muted">{t(executionReasons[row.executionReasonCode] ?? t("tasks.viewTaskDetails8132d3"))}</div>}</div></HoverHint>;
+      },
+      width: 108,
+      align: 'center',
+    },
+    {
+      id: 'progress',
+      header: t("tasks.progressacf014"),
+      accessor: (row) => {
+        return <TaskProgressCell task={row} />;
+      },
+      width: 150,
+      align: 'center',
+    },
+    ...(isSaaS ? [{
+      id: 'cost',
+      header: t("tasks.cost9836a9"),
+      accessor: (row: AnalysisTask) => (
+        <TaskCostValue summary={taskBilling[row.id]} loading={billingLoading && !taskBilling[row.id]} />
+      ),
+      width: 110,
+      align: 'center' as const,
+    }] : []),
+    {
+      id: 'createdAt',
+      header: t("admin.createdAt84e380"),
+      accessor: (row) => <span className="whitespace-nowrap tabular-nums">{formatLocalDateTime(taskDisplayCreatedAt(row))}</span>,
+      width: 140,
+      align: 'center',
+    },
+    {
+      id: 'completedAt',
+      header: t("tasks.completedAt754a8a"),
+      accessor: (row) => <span className="whitespace-nowrap tabular-nums">{formatLocalDateTime(row.completedAt)}</span>,
+      width: 140,
+      align: 'center',
+    },
+    {
+      id: 'remark',
+      header: t("admin.notese03614"),
+      accessor: (row) => (
+        <span className={row.remark ? 'text-fg-default truncate block max-w-[100px] text-center' : 'text-fg-muted text-center'}>
+          {row.remark || '-'}
+        </span>
+      ),
+      width: 72,
+      align: 'center',
+    },
+    {
+      id: 'actions',
+      header: t("admin.actionsf3ea6d"),
+      accessor: (row) => (
+        <TaskActionsCell
+          task={row}
+          onStart={handleStartTask}
+          onStop={handleStopTask}
+          onRetry={handleRetryTask}
+          onEdit={task=>{if(canEditTask(task))setEditingTask(task);}}
+          onDelete={handleDeleteTask}
+          onView={handleOpenInterpretation}
+          onDetails={handleOpenDetails}
+          isLoading={actionLoading === row.id}
+        />
+      ),
+      width: 272,
+      minWidth: 272,
+      maxWidth: 272,
+      align: 'center',
+      pinned: 'right',
+    },
+  ];
+
+  return (
+    <div className="flex h-full min-w-0 w-full">
+        <div className="min-w-0 flex-1">
+          <div className="yj-page-shell yj-task-page h-full min-w-0 overflow-y-auto overflow-x-hidden p-6 xl:p-8">
+            <div className="yj-task-heading">
+              <div><h2 className="yj-page-title">{t("tasks.taskCenterf692ff")}</h2><p className="yj-page-subtitle">{t("tasks.trackAnalysisProgressAndInterpretResults9952cc")}</p></div>
+
+            </div>
+
+            <RetentionNotice kind="task" />
+
+            {actionError && (
+              <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {actionError}
+              </div>
+            )}
+
+            {error && tasks !== null && (
+              <div className="mb-4 flex items-center gap-2 rounded-md border border-warning-muted bg-warning-subtle px-4 py-3 text-sm text-warning-fg">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                {t("tasks.backgroundRefreshFailedShowingPreviouslyLoadedData78931b")}{error}
+              </div>
+            )}
+
+            {loading && tasks === null && (
+              <div className="yj-empty-state">
+                <div>
+                  <span className="yj-empty-state-icon">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  </span>
+                  <p className="text-sm text-fg-muted">{t("tasks.loading514c33")}</p>
+                </div>
+              </div>
+            )}
+
+            {error && tasks === null && !loading && (
+              <div className="yj-empty-state">
+                <div>
+                  <span className="yj-empty-state-icon">
+                    <AlertTriangle className="w-5 h-5 text-danger-fg" />
+                  </span>
+                  <p className="text-sm font-medium text-[var(--yj-text-strong)] mb-1">{t("tasks.taskListUnavailable459e4e")}</p>
+                  <p className="text-sm text-danger-fg mb-4">{error}</p>
+                  <Button permission={null} action="retry" variant="secondary" onClick={refetch}>{t("pipeline.retrye2d53a")}</Button>
+                </div>
+              </div>
+            )}
+
+            {tasks !== null && <HoverHint content={t("tasks.summaryOfUpToRecentTasksUsee0ade1")}><div className="yj-task-metrics" aria-label={t("tasks.recentTaskStatusOverview65fe08")} >
+                  {([{ label: t("admin.recentTasksabc5c3"), value: 'all' }, { label: t("admin.running594249"), value: 'running' }, { label: t("tasks.awaitingInterpretation0b7bdd"), value: 'pending_interpretation' }, { label: t("admin.completede99b48"), value: 'completed' }, { label: t("admin.failed3e3c80"), value: 'failed' }] as const).map(item => <button type="button" key={item.label} aria-pressed={statusFilter === item.value} onClick={() => setStatusFilter(item.value)}>
+                    <strong>{(recentCounts[item.value] ?? 0).toLocaleString(t.locale)}</strong>{translateUI(item.label, t)}
+                  </button>)}
+                </div></HoverHint>}
+                <div className="yj-panel min-w-0 overflow-hidden">
+                <div className="yj-panel-header flex-wrap gap-3 px-5 py-4">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="w-64 max-w-full">
+                      <Input
+                        placeholder={t("tasks.searchTaskOrSampleId9c4f1c")}
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        leftElement={<Search className="w-4 h-4" />}
+                      />
+                    </div>
+                    <div className="w-36">
+                      <StatusFilterDropdown
+                        value={statusFilter}
+                        onChange={(value) => setStatusFilter(value)}
+                      />
+                    </div>
+                  </div>
+                  {tasks !== null && <span className="text-xs text-fg-muted">{t("tasks.showing5d908b")}{filteredTasks.length.toLocaleString(t.locale)} {t("tasks.tasks0fdf86")}</span>}
+                  <div role="group" aria-label={t('tasks.taskActions')} className="ml-auto flex flex-wrap items-center gap-2">
+                    <Button permission={null} action="download" onClick={downloadTaskBatchTemplate}>{t('samples.downloadTemplatea3afb2')}</Button>
+                    <Button permission="tasks.manage" action="upload" onClick={()=>setIsBatchTaskModalOpen(true)}>{t('tasks.uploadTaskInformation')}</Button>
+                    <Button permission="tasks.manage" action="add" variant="primary" onClick={()=>setIsNewTaskModalOpen(true)}>{t('tasks.newTask6b717c')}</Button>
+                  </div>
+                </div>
+
+                {tasks !== null && (filteredTasks.length > 0 ? (
+                  <MobileRecordList data={filteredTasks} columns={localizeDisplay(columns, t)}
+                    title={row => <>{row.internalId || row.sampleId || row.id}<ExampleBadge origin={row.origin} /></>}
+                    primaryLabel={t("history.sampleId6d686e")} statusColumn="status"
+                    secondaryColumns={['pipeline', 'progress']} detailColumns={['taskId', 'sample', 'expiresAt', 'createdAt', 'cost', 'remark']}
+                    desktop={
+                      <DataTable
+                        data={filteredTasks}
+                        columns={localizeDisplay(columns, t)}
+                        rowKey="id"
+                        density="compact"
+                        className="yj-data-table right-pinned-actions-table task-center-table"
+                      />
+                    }
+                  />
+                ) : (
+                  <EmptyState
+                    icon={<List />}
+                    title={t("common.noTasks15652e")}
+                    description={t("tasks.adjustFiltersOrCreateANewAnalysis5cca37")}
+                  />
+                ))}
+                </div>
+          </div>
+        </div>
+      {/* 新建任务弹窗 */}
+      <NewTaskModal
+        isOpen={isNewTaskModalOpen}
+        onClose={() => setIsNewTaskModalOpen(false)}
+        onSubmit={handleCreateTask}
+      />
+
+      <BatchTaskModal
+        isOpen={isBatchTaskModalOpen}
+        onClose={() => setIsBatchTaskModalOpen(false)}
+        onCompleted={async () => {
+          await refetch();
+        }}
+      />
+
+      {/* 编辑任务弹窗 */}
+      <EditTaskModal
+        isOpen={editingTask !== null}
+        onClose={() => setEditingTask(null)}
+        onSubmit={handleEditTask}
+        task={editingTask}
+      />
     </div>
   );
 }

@@ -1,27 +1,27 @@
 /**
- * Unified localStorage key constants
- * All auth-related storage uses these keys — single source of truth.
+ * Unified localStorage key constants.
+ * Cookie-backed auth stores only non-sensitive UI session state here.
  */
 
 const PREFIX = 'schema';
 
 export const STORAGE_KEYS = {
-  /** Legacy token cache. Cookie sessions remove this key. */
-  TOKENS: `${PREFIX}_auth_tokens`,
+  /** Legacy pre-cookie token cache key, removed on auth/session changes. */
   LEGACY_AUTH_TOKENS: `${PREFIX}_auth_tokens`,
-  ACTIVE_UPLOAD: `${PREFIX}:active-upload:v1`,
   /** Current user profile */
   USER: `${PREFIX}_auth_user`,
   /** User's organizations */
   ORGANIZATIONS: `${PREFIX}_auth_orgs`,
   /** Currently active organization */
   CURRENT_ORG: `${PREFIX}_auth_current_org`,
-  /** AI configuration (encrypted) */
+  /** Non-sensitive AI UI configuration (model/enabled only; no API key). */
   AI_CONFIG: `${PREFIX}_ai_config`,
-  /** AI chat history */
+  /** Legacy AI chat history key; cleared on startup because chat may contain patient data. */
   AI_HISTORY: `${PREFIX}_ai_history`,
   /** Sidebar collapsed state */
   SIDEBAR_STATE: `${PREFIX}_sidebar_state`,
   /** UI theme */
   THEME: `${PREFIX}_ui_theme`,
+  /** In-progress multipart upload resume state (filenames / file IDs). */
+  ACTIVE_UPLOAD: `${PREFIX}:active-upload:v1`,
 } as const;

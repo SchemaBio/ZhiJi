@@ -1,3 +1,4 @@
+import type {TrioMember} from '@/lib/sample-parents';
 export type TaskStatus =
   | 'waiting_for_data'
   | 'queued'
@@ -8,12 +9,16 @@ export type TaskStatus =
   | 'pending_interpretation';
 
 export interface AnalysisTask {
+  origin?: string;
+ trioMembers?:TrioMember[];
+  template?: string;
+ resultCapabilities?: string[];
   id: string;
   name?: string;
   sampleId: string;
   internalId: string;
-  template?: string;
   pipeline: string;
+  pipelineId?: string;
   pipelineVersion: string;
   status: TaskStatus;
   vmStatus?: string;
@@ -21,7 +26,16 @@ export interface AnalysisTask {
   executionPhase?: string;
   executionReasonCode?: string;
   attemptId?: string;
+  phaseUpdatedAt?: string;
+  bootstrapPhase?: string;
+  bootstrapLastHeartbeatAt?: string;
+  diagnosticHoldUntil?: string;
+  diagnosticSummary?: string;
+  dispatchNextRetryAt?: string;
+  dispatchRetryDeadlineAt?: string;
+  dispatchRetryCount?: number;
   progress: number;
+  expiresAt?: string;
   createdAt: string;
   createdBy: string;
   retryStartedAt?: string;
@@ -31,8 +45,40 @@ export interface AnalysisTask {
   remark?: string;
 }
 
-export interface AnalysisTaskDetail extends AnalysisTask {
+export interface AnalysisTaskDetail {
+  normalSampleId?: string;
+  normalSampleInternalId?: string;
+ trioMembers?:TrioMember[];
+  template?: string;
+ resultCapabilities?: string[];
+  id: string;
   name: string;
+  sampleId: string;
+  internalId: string;
+  pipeline: string;
+  pipelineId?: string;
+  pipelineVersion: string;
+  status: TaskStatus;
+  vmStatus?: string;
+  resultImportStatus?: string;
+  executionPhase?: string;
+  executionReasonCode?: string;
+  attemptId?: string;
+  phaseUpdatedAt?: string;
+  bootstrapPhase?: string;
+  bootstrapLastHeartbeatAt?: string;
+  diagnosticHoldUntil?: string;
+  diagnosticSummary?: string;
+  dispatchNextRetryAt?: string;
+  dispatchRetryDeadlineAt?: string;
+  dispatchRetryCount?: number;
+  expiresAt?: string;
+  createdAt: string;
+  createdBy: string;
+  retryStartedAt?: string;
+  interpretationCompletedAt?: string;
+  interpretationCompletedBy?: string;
+  completedAt?: string;
 }
 
 export interface TaskListResponse {
@@ -44,18 +90,106 @@ export interface TaskListResponse {
 }
 
 export interface TaskCreateRequest {
+ vcf_asset_id?: string; vcf_sample_name?: string;
   sampleId: string;
+  pedigreeId?: string;
   internalId: string;
   pipelineId: string;
   pipelineName: string;
   pipelineVersion: string;
   remark: string;
+  template?: string;
+ resultCapabilities?: string[];
+  executor?: 'local' | 'slurm' | 'lsf';
+  inputs?: Record<string, unknown>;
+  config_file?: string;
+  output_dir?: string;
 }
 
 export interface TaskUpdateRequest {
   internalId: string;
   pipeline: string;
   remark: string;
+}
+
+export interface SepiidaWorkflow {
+  id: string;
+  uuid: string;
+  name: string;
+  status: string;
+  start_time?: string;
+  end_time?: string;
+}
+
+export interface SepiidaTask {
+  id: string;
+  workflow_id: string;
+  name: string;
+  job_name: string;
+  status: string;
+  start_time?: string;
+  end_time?: string;
+  stdout?: string;
+  stderr?: string;
+}
+
+export interface TaskProgressResponse {
+  id: string;
+  uuid: string;
+  name: string;
+  template: string;
+  status: string;
+  progress: number;
+  created_at: string;
+  result_import_status?: string;
+  result_import_error?: string;
+  result_imported_at?: string;
+  result_import_attempts?: number;
+  vm_status?: string;
+  execution_phase?: string;
+  execution_reason_code?: string;
+  bootstrap_phase?: string;
+  bootstrap_last_heartbeat_at?: string;
+  diagnostic_hold_until?: string;
+  diagnostic_summary?: string;
+  attempt_id?: string;
+  phase_updated_at?: string;
+  dispatch_next_retry_at?: string;
+  dispatch_retry_deadline_at?: string;
+  dispatch_retry_count?: number;
+  sepiida?: SepiidaWorkflow;
+  tasks?: SepiidaTask[];
+  analysis_progress?: AnalysisProgress;
+  node_liveness?: Liveness;
+  agent_liveness?: AgentLiveness;
+}
+
+export interface AnalysisStageProgress {
+  code: string;
+  label: string;
+  weight: number;
+  percent: number;
+  status: 'pending' | 'running' | 'success' | string;
+}
+
+export interface AnalysisProgress {
+  percent: number;
+  profile_version: string;
+  active_stages: string[];
+  stages: AnalysisStageProgress[];
+}
+
+export interface Liveness {
+  state: 'online' | 'delayed' | 'offline' | 'unknown' | 'legacy/unknown' | string;
+  last_seen_at?: string;
+}
+
+export interface AgentLiveness {
+  state: 'online' | 'delayed' | 'offline' | 'legacy/unknown' | string;
+  last_collected_at?: string;
+  last_progress_push_at?: string;
+  collection_status?: 'ok' | 'error' | 'unknown' | string;
+  error_code?: string;
 }
 
 export interface TaskStatsResponse {

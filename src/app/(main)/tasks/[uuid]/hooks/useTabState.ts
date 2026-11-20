@@ -3,71 +3,116 @@
 import * as React from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { TabType, TableFilterState } from '../types';
+import { isOncologyResultTab, type SNVResultLocus } from '../oncology-results';
 import { DEFAULT_FILTER_STATE } from '../types';
 
-interface TabStates {
-  'snv-indel': TableFilterState;
-  'hotspot': TableFilterState;
-  'chemotherapy': TableFilterState;
-  'germline': TableFilterState;
-  'cnv-gene': TableFilterState;
-  'cnv-exon': TableFilterState;
-  'cnv-chrom': TableFilterState;
-  'fusion': TableFilterState;
-  'neoantigen': TableFilterState;
-}
+type ResultTableTab = 'germline' | 'hotspot' | 'snv-indel' | 'cnv-segment' | 'cnv-exon' | 'str' | 'mei' | 'mt' | 'upd' | 'roh';
+type TabStates = Record<ResultTableTab, TableFilterState>;
+
+const TABLE_TABS: ResultTableTab[] = ['germline', 'hotspot', 'snv-indel', 'cnv-segment', 'cnv-exon', 'str', 'mei', 'mt', 'upd', 'roh'];
+const ALL_TABS: TabType[] = ['overview', 'snv-indel', 'cnv-segment', 'cnv-exon', 'str', 'mei', 'mt', 'upd', 'roh', 'files'];
 
 interface UseTabStateReturn {
   activeTab: TabType;
-  setActiveTab: (tab: TabType) => void;
-  getFilterState: (tab: keyof TabStates) => TableFilterState;
-  setFilterState: (tab: keyof TabStates, state: TableFilterState) => void;
+  activeRow: string | null;
+  hasExplicitTab: boolean;
+  setActiveTab: (tab: TabType, rowId?: string, locus?: SNVResultLocus) => void;
+  getFilterState: (tab: ResultTableTab) => TableFilterState;
+  setFilterState: (tab: ResultTableTab, state: TableFilterState) => void;
+}
+
+function emptyTabStates(): TabStates {
+  return TABLE_TABS.reduce((states, tab) => ({ ...states, [tab]: { ...DEFAULT_FILTER_STATE, filters: {} } }), {} as TabStates);
+}
+
+function filtersFromURL(params: URLSearchParams): TableFilterState {
+  let filters: Record<string, string | string[]> = {};
+  const encoded = params.get('filters');
+  if (encoded) {
+    try {
+      const parsed: unknown = JSON.parse(encoded);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        filters = Object.fromEntries(Object.entries(parsed).filter(([, value]) => typeof value === 'string' || Array.isArray(value)));
+      }
+    } catch {
+      filters = {};
+    }
+  }
+  const page = Number(params.get('page'));
+  return {
+    ...DEFAULT_FILTER_STATE,
+    searchQuery: params.get('q') ?? '',
+    filters,
+    columnFilters: (() => {
+      try {
+        const value = params.get('columnFilters');
+        const parsed: unknown = value ? JSON.parse(value) : [];
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter(item => item && typeof item.column === 'string' && typeof item.operator === 'string' && ['contains', 'not_contains', 'equals', 'in', 'gt', 'gte', 'lt', 'lte', 'between', 'is_missing', 'is_not_missing'].includes(item.operator));
+      } catch {
+        return [];
+      }
+    })(),
+    sortColumn: params.get('sort') || undefined,
+    sortDirection: params.get('direction') === 'desc' ? 'desc' : params.get('direction') === 'asc' ? 'asc' : undefined,
+    page: Number.isInteger(page) && page > 0 ? page : 1,
+  };
+}
+
+function writeFilterParams(params: URLSearchParams, state: TableFilterState) {
+  const set = (key: string, value: string | undefined) => {
+    if (value) params.set(key, value);
+    else params.delete(key);
+  };
+  set('q', state.searchQuery || undefined);
+  set('sort', state.sortColumn);
+  set('direction', state.sortDirection);
+  set('page', state.page > 1 ? String(state.page) : undefined);
+  const filters = Object.fromEntries(Object.entries(state.filters).filter(([, value]) => value !== '' && (!Array.isArray(value) || value.length > 0)));
+  set('filters', Object.keys(filters).length > 0 ? JSON.stringify(filters) : undefined);
+  set('columnFilters', state.columnFilters?.length ? JSON.stringify(state.columnFilters) : undefined);
 }
 
 export function useTabState(uuid: string): UseTabStateReturn {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const rawTab = searchParams.get('tab');
+  const validTab = isOncologyResultTab(rawTab) || ALL_TABS.includes(rawTab as TabType);
+  const activeTab = validTab ? rawTab as TabType : 'overview';
+  const activeRow = searchParams.get('row');
+  const [tabStates, setTabStates] = React.useState<TabStates>(emptyTabStates);
 
-  // 从URL获取当前标签页
-  const activeTab = (searchParams.get('tab') as TabType) || 'sample-info';
+  React.useEffect(() => {
+    if (!TABLE_TABS.includes(activeTab as ResultTableTab)) return;
+    const tab = activeTab as ResultTableTab;
+    const next = filtersFromURL(searchParams);
+    setTabStates(previous => ({ ...previous, [tab]: next }));
+  }, [activeTab, searchParams]);
 
-  // 各标签页的筛选状态（保存在内存中）
-  const [tabStates, setTabStates] = React.useState<TabStates>({
-    'snv-indel': { ...DEFAULT_FILTER_STATE },
-    'hotspot': { ...DEFAULT_FILTER_STATE },
-    'chemotherapy': { ...DEFAULT_FILTER_STATE },
-    'germline': { ...DEFAULT_FILTER_STATE },
-    'cnv-gene': { ...DEFAULT_FILTER_STATE },
-    'cnv-exon': { ...DEFAULT_FILTER_STATE },
-    'cnv-chrom': { ...DEFAULT_FILTER_STATE },
-    'fusion': { ...DEFAULT_FILTER_STATE },
-    'neoantigen': { ...DEFAULT_FILTER_STATE },
-  });
-
-  // 切换标签页
-  const setActiveTab = React.useCallback((tab: TabType) => {
+  const setActiveTab = React.useCallback((tab: TabType, rowId?: string, locus?: SNVResultLocus) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set('tab', tab);
-    router.push(`/tasks/${uuid}?${params.toString()}`);
-  }, [router, uuid, searchParams]);
+    if (rowId) params.set('row', rowId);
+    else params.delete('row');
+    if (tab === 'snv-indel' && locus) {
+      writeFilterParams(params, { ...DEFAULT_FILTER_STATE, columnFilters: [
+        { column: 'Chromosome', operator: 'equals', value: locus.chromosome },
+        { column: 'Position', operator: 'equals', value: String(locus.position) },
+      ] });
+    } else if (TABLE_TABS.includes(tab as ResultTableTab)) writeFilterParams(params, tabStates[tab as ResultTableTab]);
+    else ['q', 'sort', 'direction', 'page', 'filters', 'columnFilters'].forEach(key => params.delete(key));
+    router.push(`/tasks/${encodeURIComponent(uuid)}?${params.toString()}`);
+  }, [router, searchParams, tabStates, uuid]);
 
-  // 获取指定标签页的筛选状态
-  const getFilterState = React.useCallback((tab: keyof TabStates): TableFilterState => {
-    return tabStates[tab];
-  }, [tabStates]);
+  const getFilterState = React.useCallback((tab: ResultTableTab): TableFilterState => tabStates[tab], [tabStates]);
 
-  // 设置指定标签页的筛选状态
-  const setFilterState = React.useCallback((tab: keyof TabStates, state: TableFilterState) => {
-    setTabStates(prev => ({
-      ...prev,
-      [tab]: state,
-    }));
-  }, []);
+  const setFilterState = React.useCallback((tab: ResultTableTab, state: TableFilterState) => {
+    setTabStates(previous => ({ ...previous, [tab]: state }));
+    if (tab !== activeTab) return;
+    const params = new URLSearchParams(searchParams.toString());
+    writeFilterParams(params, state);
+    router.replace(`/tasks/${encodeURIComponent(uuid)}?${params.toString()}`, { scroll: false });
+  }, [activeTab, router, searchParams, uuid]);
 
-  return {
-    activeTab,
-    setActiveTab,
-    getFilterState,
-    setFilterState,
-  };
+  return { activeTab, activeRow, hasExplicitTab: validTab, setActiveTab, getFilterState, setFilterState };
 }

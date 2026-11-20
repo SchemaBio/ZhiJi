@@ -1,45 +1,72 @@
+import { SNV_INDEL_LABEL, type OncologyResultTab, type OncologyResultSummary, type OncologyResultRow } from './oncology-results';
+import type { SNVSampleMetrics, SNVZygosity } from '@/lib/snv-sample-metrics';
 /**
  * 分析结果详情页类型定义
  */
 
 // ============ 任务状态 ============
-export type AnalysisStatus = 'queued' | 'running' | 'completed' | 'failed' | 'pending_interpretation';
+export type AnalysisStatus =
+  | 'waiting_for_data'
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'pending_interpretation';
 
 // ============ 分析任务详情 ============
 export interface AnalysisTaskDetail {
+ trioMembers?:import('@/lib/sample-parents').TrioMember[];
+  template?: string;
+ resultCapabilities?: string[];
   id: string;                    // UUID
   name: string;                  // 任务名称
-  sampleId: string;              // 样本ID
-  sampleName: string;            // 样本名称（患者姓名脱敏）
+  sampleId: string;              // 样本ID (UUID)
+  normalSampleId?: string;
+  normalSampleInternalId?: string;
+  internalId: string;            // 内部编号
   pipeline: string;              // 分析流程名称
+  pipelineId?: string;
   pipelineVersion: string;       // 流程版本
   status: AnalysisStatus;        // 任务状态
+  vmStatus?: string;
+  resultImportStatus?: string;
+  executionPhase?: string;
+  executionReasonCode?: string;
+  attemptId?: string;
+  phaseUpdatedAt?: string;
+  bootstrapPhase?: string;
+  bootstrapLastHeartbeatAt?: string;
+  diagnosticHoldUntil?: string;
+  diagnosticSummary?: string;
+  dispatchNextRetryAt?: string;
+  dispatchRetryDeadlineAt?: string;
+  dispatchRetryCount?: number;
+  expiresAt?: string;
   createdAt: string;             // 创建时间
   createdBy: string;             // 创建者
+  retryStartedAt?: string;
+  interpretationCompletedAt?: string;
+  interpretationCompletedBy?: string;
   completedAt?: string;          // 完成时间
 }
 
 // ============ 质控结果 ============
 export interface QCResult {
-  totalReads: number;            // 总读数
-  mappedReads: number;           // 比对读数
-  mappingRate: number;           // 比对率 (0-1)
-  averageDepth: number;          // 平均覆盖深度
-  targetCoverage: number;        // 目标区域覆盖率 (0-1)
-  duplicateRate: number;         // 重复率 (0-1)
-  q30Rate: number;               // Q30比例 (0-1)
-  insertSize: number;            // 插入片段大小
-  gcRatio: number;               // GC比例 (0-1)
-  uniformity: number;            // 均一性 (0-1)
-  dedupDepth: number;            // 去重深度
-  captureEfficiency: number;     // 捕获效率 (0-1)
+  totalReads: number | null;     // 总读数
+  mappedReads: number | null;    // 比对读数
+  mappingRate: number | null;    // 比对率 (0-1)
+  averageDepth: number | null;   // 平均覆盖深度
+  dedupDepth: number | null;     // 去重深度
+  targetCoverage: number | null; // 目标区域覆盖率 (0-1)
+  duplicateRate: number | null;  // 重复率 (0-1)
+  q30Rate: number | null;        // Q30比例 (0-1)
+  insertSize: number | null;     // 插入片段大小
+  gcRatio: number | null;        // GC比例 (0-1)
+  captureEfficiency: number | null;
   predictedGender: 'Male' | 'Female' | 'Unknown';  // 性别预测
-  contaminationRate: number;     // 污染比例 (0-1)
-  // RNA 特有质控指标（可选）
-  rrnaRatio?: number;            // rRNA 污染率
-  frationRatio?: number;         // 正向/反向reads比例
-  junctionReads?: number;        // 跨剪接Reads数
-  properPairedReads?: number;    // 正确配对reads比例
+  mtCoverage: number | null;     // 线粒体覆盖度 (0-1)
+  mtDepth: number | null;        // 线粒体深度
 }
 
 export type QCMetricKey = keyof QCResult;
@@ -54,6 +81,121 @@ export interface QCThreshold {
 
 export type QCStatus = 'success' | 'warning' | 'danger';
 
+// ============ 结果工作台上下文 ============
+export interface QCMetric {
+  key: string;
+  value: number | null;
+  unit?: string;
+  source?: string;
+  threshold?: string;
+}
+
+export interface QCMemberSummary {
+  declaredGender?: string;
+  predictedGender?: string;
+  genderComparison?: string;
+  sexMethod?: string;
+  contaminationStatus?: 'pass' | 'warning' | 'indeterminate' | 'notRun';
+  sryCutoff?: number;
+  memberId: string;
+  memberRole: string;
+  sampleId?: string;
+  metrics: QCMetric[];
+}
+
+export interface ResultMember {
+  id: string;
+  internalId?: string;
+  role: string;
+  sampleId?: string;
+}
+
+export interface ResultCount {
+  total: number;
+  reviewed: number;
+  focused: number;
+}
+
+export interface QCPairConcordance {
+  status: 'match' | 'mismatch' | 'indeterminate' | 'notRun';
+  concordance?: { value: number | null; unit: 'percent' | '%' | 'fraction' };
+  sitesCompared?: number;
+  method?: string;
+}
+
+export interface ResultContext {
+  qcPairConcordance?: QCPairConcordance;
+  oncology?: Partial<Record<OncologyResultTab, OncologyResultSummary>>;
+ kinship?: {status: 'ready'|'pending'|'empty'|'unavailable'|'invalid';source: string;pairs: Array<{sampleA:string;sampleB:string;relatedness:number;pedigreeRelatedness:number;ibs0:number;ibs2:number;sites:number;pedigreeParents:boolean;predictedParents:boolean;parentError:boolean;sampleDuplicationError:boolean}>};
+ capabilities?: string[];
+ vcfAnnotation?: {preprocessing?: Record<string,unknown>; sex_inference?: {x_sum:number;ratio:number|null;sex:string;x_hom?:number;x_haploid_alt?:number;minimum_sites?:number;female_max_ratio?:number;male_min_ratio?:number;warning?:string;reason?:string};summary?: Record<string,unknown>};
+  taskUuid: string;
+  executionAttemptId: string;
+  importBatchId?: number;
+  importStatus: 'pending' | 'running' | 'success' | 'failed' | string;
+  state: 'ready' | 'importing' | 'import_failed' | 'workflow_running' | 'not_imported' | string;
+  version: string;
+  reference: {
+    declaredId?: string;
+    available: boolean;
+    reason?: string;
+  };
+  members: ResultMember[];
+  types: Record<string, ResultCount>;
+  qc: QCMemberSummary[];
+  permissions: { canReview: boolean; canFocus: boolean };
+  parquet?: {
+    available: boolean;
+    tables: string[];
+    preparedTables: string[];
+    manifestVersion?: string;
+    fieldProfileVersion?: string;
+    automaticAssessmentProfile?: string;
+    reason?: string;
+  };
+}
+
+export interface IGVReference {
+  id?: string;
+  available: boolean;
+  reason?: string;
+  fastaURL?: string;
+  indexURL?: string;
+  aliasURL?: string;
+  cytobandURL?: string;
+  geneTrackURL?: string;
+  geneTrackIndexURL?: string;
+}
+
+export interface IGVTrackDescriptor {
+  id: string;
+  name: string;
+  type: 'alignment' | 'variant' | 'annotation' | 'wig' | string;
+  format: 'bam' | 'vcf' | 'bed' | 'cram' | 'gff3' | 'bigwig' | string;
+  memberId?: string;
+  memberRole?: string;
+  hasIndex: boolean;
+  available: boolean;
+  reason?: string;
+}
+
+export interface IGVSession {
+	transport?: 'api';
+  taskUuid: string;
+  executionAttemptId: string;
+  version: string;
+  available: boolean;
+  reason?: string;
+  reference: IGVReference;
+  tracks: IGVTrackDescriptor[];
+}
+
+export interface IGVTrackURL {
+  id: string;
+  url: string;
+  indexURL?: string;
+}
+
 // ============ ACMG分类 ============
 export type ACMGClassification = 
   | 'Pathogenic' 
@@ -62,63 +204,108 @@ export type ACMGClassification =
   | 'Likely_Benign' 
   | 'Benign';
 
-// ============ Tier临床意义分类 ============
-export type TierClassification = 'Tier I' | 'Tier II' | 'Tier III' | 'Tier IV' | 'Unknown';
-
-// ============ SNV/Indel变异 ============
+// ============ SNP/InDel变异 ============
 // ============ 变异审核状态 ============
 export interface VariantReviewStatus {
+  // Immutable result identity must survive mapping into detail/AI forms.
+  rowOrdinal?: number;
+  attemptId?: string;
+  datasetVersion?: string;
+  automaticAssessment?: import('@/lib/assessment/types').AutomaticAssessment;
+  pinReasons?: string[];
+  pinned: boolean;              // 重要位点：独立于历史复核
+  pinSource?: 'automatic' | 'manual';
   reviewed: boolean;             // 是否已审核
-  reported: boolean;             // 是否已回报
+  focused: boolean;             // 是否已关注
   reviewedBy?: string;           // 审核人
   reviewedAt?: string;           // 审核时间
-  reportedBy?: string;           // 回报人
-  reportedAt?: string;           // 回报时间
+  focusedBy?: string;           // 关注人
+  focusedAt?: string;           // 关注时间
+  adjustmentVersion?: number;
+}
+
+export interface ACMGEvidenceEntry {
+  code: string;
+  strength: 'supporting' | 'moderate' | 'strong' | 'very_strong' | 'standalone';
+  source?: string;
+  note?: string;
+  value?: number;
+}
+
+export interface AutomaticACMGAssessment {
+  priorityScore?:number;
+  phenotypeCandidate?:boolean;
+  annotationDetails?:{field:string;value:string}[];
+  phenotypeMatch?:import('@/lib/assessment/types').PhenotypeMatch;
+  phenotypePriority?:boolean;
+  phenotypeResource?:string;
+  referenceVersion?:string;
+  classificationBasis?: import('@/lib/assessment/types').AutomaticAssessment['classificationBasis'];
+  screeningNotes?: string[];
+  profile: string;
+  state: string;
+  score: number;
+  classification?: ACMGClassification;
+  criteria: ACMGEvidenceEntry[];
+  pending: string[];
 }
 
 export interface SNVIndel extends VariantReviewStatus {
+  oncologyDetails?: Pick<OncologyResultRow, 'values' | 'details' | 'related'>;
+  hotspotTargetOnly?: boolean;
+  adoptedACMG?: { version: 'legacy'|'svcv4'; classification?: ACMGClassification; score?: number; state?: string; profile?: string; vusSubclass?: string; source?: string; savedAt?: string; savedBy?: string; automatic?: boolean };
+  acmgSavedAt?: string; acmgSavedBy?: string; svcv4SavedAt?: string; svcv4SavedBy?: string;
+  acmgAIResult?: import('@/lib/ai-assistance').AIAssistanceResult;
+  activeAcmgVersion?: 'legacy' | 'svcv4';
+  svcv4Assessment?: import('@/lib/svcv4').SVCv4Assessment;
+  svcv4AIResult?: import('@/lib/ai-assistance').AIAssistanceResult;
+  legacyAcmgClassification?: ACMGClassification;
+  acmgVusSubclass?: string;
   id: string;
-  gene: string;                  // 基因名 (HGNC)
-  chromosome: string;            // 染色体 (不带chr前缀)
-  position: number;              // 位置 (兼容旧字段)
-  start: number;                 // 起始位置 (NCCL)
-  end: number;                   // 终止位置 (NCCL: SNV时与start相同，Insertion时为-1表示"-")
-  ref: string;                   // 参考碱基 (Insertion时为"-")
-  alt: string;                   // 变异碱基 (Deletion时为"-")
+  gene: string;                  // 基因名
+  chromosome: string;            // 染色体
+  position: number;              // 位置
+  ref: string;                   // 参考碱基
+  alt: string;                   // 变异碱基
   variantType: 'SNV' | 'Insertion' | 'Deletion' | 'Complex';
-  zygosity: 'Heterozygous' | 'Homozygous' | 'Hemizygous';
-  alleleFrequency: number;       // 等位基因频率 (VAF)
+  zygosity: SNVZygosity;
+  proband?: SNVSampleMetrics;
+  father?: SNVSampleMetrics;
+  mother?: SNVSampleMetrics;
+  alleleFrequency?: number;       // 等位基因频率
   depth: number;                 // 覆盖深度
-  altReads?: number;             // 突变reads数目
-  dedupDepth?: number;           // 去重深度
-  dedupAltReads?: number;        // 去重突变reads数目
-  dedupVAF?: number;             // 去重VAF
-  acmgClassification: ACMGClassification;
-  clinicalSignificance: TierClassification;  // 临床意义 (Tier分类)
-  transcript: string;            // 转录本 (含版本号，如 NM_005228.5)
-  hgvsc: string;                 // cDNA变化 (cHGVS)
-  hgvsp: string;                 // 蛋白质变化 (pHGVS)
-  consequence: string;           // 变异后果 (Consequence)
-  affectedExon?: string;         // 受影响外显子 (如 "19/27")
+  acmgClassification?: ACMGClassification;
+  automaticAcmg?: AutomaticACMGAssessment;
+  acmgEvidence?: ACMGEvidenceEntry[];
+  acmgOverride?: ACMGClassification;
+  acmgOverrideReason?: string;
+  acmgState?: string;
+  acmgAssessmentSource?: 'automatic' | 'manual_evidence' | 'manual_override';
+  interpretation?: string;
+  transcript: string;            // 转录本
+  hgvsc: string;                 // cDNA变化
+  hgvsp: string;                 // 蛋白质变化
+  consequence: string;           // 变异后果
   // 扩展注释信息
   rsId?: string;                 // dbSNP ID
   clinvarId?: string;            // ClinVar ID
   clinvarSignificance?: string;  // ClinVar 临床意义
+  clinvarReviewStatus?: string;
+  clinvarDisease?: string;
+  clinvarStars?: string;
+  annotationValues?: Record<string, string>;
   gnomadAF?: number;             // gnomAD 人群频率
   gnomadEasAF?: number;          // gnomAD 东亚人群频率
-  exacAF?: number;               // ExAC 人群频率
-  siftScore?: number;            // SIFT 评分
-  siftPrediction?: string;       // SIFT 预测
-  polyphenScore?: number;        // PolyPhen-2 评分
-  polyphenPrediction?: string;   // PolyPhen-2 预测
-  caddScore?: number;            // CADD 评分
-  revelScore?: number;           // REVEL 评分
-  spliceAI?: number;             // SpliceAI 评分
-  intervarClassification?: string; // InterVar 自动分类
-  alphaMissenseScore?: number;   // AlphaMissense 评分
-  alphaMissensePrediction?: string; // AlphaMissense 预测
-  maverickScore?: number;        // Maverick 评分
-  maverickPrediction?: string;   // Maverick 预测
+  maxAF?: number;
+  gnomadNhomaltXX?: number;
+  gnomadNhomaltXY?: number;
+  pangolinGain?: number;
+  pangolinLoss?: number;
+  pangolinAnnotation?: string;
+  evoScore?: number;
+  evoAnnotation?: string;
+  alphaMissenseScore?: number;
+  alphaMissenseClass?: string;
   acmgCriteria?: string[];       // ACMG 证据项
   pubmedIds?: string[];          // PubMed 文献 ID
   omimId?: string;               // OMIM ID
@@ -126,39 +313,55 @@ export interface SNVIndel extends VariantReviewStatus {
   inheritanceMode?: string;      // 遗传模式
 }
 
-// ============ 样本信息 ============
-export interface SampleInfo {
-  sampleId: string;
-  sampleName: string;
-  gender: 'Male' | 'Female' | 'Unknown';
-  age?: number;
-  clinicalDiagnosis?: string;
-  phenotypes?: string[];
-  familyHistory?: string;
-  sampleType: string;
-  collectionDate: string;
-  receivedDate: string;
-  reportDate?: string;
-  project?: string;              // 项目名称
-  institution?: string;          // 送检单位
-  cancerType?: string;           // 癌种
+// ============ CNV变异(片段级别) ============
+export type CNVType = 'Amplification' | 'Deletion' | 'Normal' | 'Unknown';
+
+export type CNVAdoptedSource = 'database' | 'quick' | 'ai' | 'clingen';
+
+export interface CNVAdoptedAssessment {
+  source: CNVAdoptedSource;
+  classification?: ClinGenClassification | '缺失' | string;
+  score?: number;
+  criteria?: string[];
+  savedAt?: string;
+  savedBy?: string;
+  automatic?: boolean;
 }
 
-// ============ CNV变异(片段级别) ============
 export interface CNVSegment extends VariantReviewStatus {
+  coordinateSystem?: '0-based-half-open'|'1-based-inclusive';
+  interpretation?: string;
+  attemptId?: string;
+  annotationValues?: Record<string, string>;
+  iscnCandidate?: string;
+  assessment?: CNVAssessment;
+  adoptedCNV?: CNVAdoptedAssessment;
+  cnvAIResult?: import('@/lib/ai-assistance').AIAssistanceResult;
   id: string;
   chromosome: string;
   startPosition: number;
   endPosition: number;
   length: number;
-  type: 'Amplification' | 'Deletion';
-  copyNumber: number;
+  type: CNVType;
+  copyNumber: number | null;
+  copyRatio: number | null;
+  log2Ratio: number | null;
   genes: string[];
-  confidence: number;
+  /** Raw signal weight; CNV Region segment weights are not probabilities. */
+  confidence: number | null;
 }
 
 // ============ CNV变异(外显子级别) ============
 export interface CNVExon extends VariantReviewStatus {
+  coordinateSystem?: '0-based-half-open'|'1-based-inclusive';
+  interpretation?: string;
+  attemptId?: string;
+  confidenceLabel?: string;
+  annotationValues?: Record<string, string>;
+  iscnCandidate?: string;
+  assessment?: CNVAssessment;
+  adoptedCNV?: CNVAdoptedAssessment;
+  cnvAIResult?: import('@/lib/ai-assistance').AIAssistanceResult;
   id: string;
   gene: string;
   transcript: string;            // 转录本
@@ -166,14 +369,16 @@ export interface CNVExon extends VariantReviewStatus {
   chromosome: string;
   startPosition: number;
   endPosition: number;
-  type: 'Amplification' | 'Deletion';
-  copyNumber: number;
-  ratio: number;
-  confidence: number;
+  type: CNVType;
+  copyNumber: number | null;
+  copyRatio: number | null;
+  log2Ratio: number | null;
+  ratio: number | null;
+  confidence: number | null;
 }
 
 // ============ 动态突变（STR） ============
-export type STRStatus = 'Normal' | 'Premutation' | 'FullMutation';
+export type STRStatus = 'Normal' | 'Premutation' | 'FullMutation' | 'Unknown';
 
 export interface STR extends VariantReviewStatus {
   id: string;
@@ -187,13 +392,39 @@ export interface STR extends VariantReviewStatus {
   status: STRStatus;
 }
 
+// ============ MEI (移动元件插入) ============
+export type MEIType = 'LINE1' | 'Alu' | 'SVA' | 'Unknown';
+export type MEIInsertionType = 'insertion' | 'deletion' | 'complex' | 'Unknown';
+
+export interface MEIVariant extends VariantReviewStatus {
+  id: string;
+  chromosome: string;            // 染色体
+  position: number;              // 插入位置
+  meiType: MEIType;              // MEI类型
+  insertionType: MEIInsertionType; // 插入类型
+  strand: '+' | '-' | 'Unknown'; // 链方向
+  length: number;                // 插入长度
+  gene: string;                  // 所在基因
+  transcript?: string;           // 转录本
+  impact?: string;               // 影响 (如 exonic, intronic, UTR5, UTR3, intergenic)
+  zygosity: 'Heterozygous' | 'Homozygous' | 'Hemizygous' | 'Unknown';
+  supportingReads: number;       // 支持读数
+  totalReads: number;            // 总读数
+  frequency?: number;            // 人群频率
+  acmgClassification?: ACMGClassification;
+  clinvarId?: string;            // ClinVar ID
+  diseaseAssociation?: string;   // 疾病关联
+  notes?: string;                // 备注
+}
+
 // ============ 线粒体变异 ============
 export type MitochondrialPathogenicity = 
   | 'Pathogenic' 
   | 'Likely_Pathogenic' 
   | 'VUS' 
   | 'Likely_Benign' 
-  | 'Benign';
+  | 'Benign'
+  | 'Unknown';
 
 export interface MitochondrialVariant extends VariantReviewStatus {
   id: string;
@@ -202,13 +433,18 @@ export interface MitochondrialVariant extends VariantReviewStatus {
   alt: string;
   gene: string;
   heteroplasmy: number;          // 异质性比例 (0-1)
+  depth: number | null;
+  altReadCounts: (number | null)[];
+  hgvs?: string;
+  annotationValues?: Record<string, unknown>;
+  mtAssessment?: { profile: string; classification: ACMGClassification; basis?: 'combination' | 'insufficient' | 'conflicting'; evidence: { code: string; strength: string; note?: string }[] };
   pathogenicity: MitochondrialPathogenicity;
   associatedDisease: string;     // 关联疾病
   haplogroup?: string;           // 单倍群
 }
 
 // ============ UPD区域 ============
-export type UPDType = 'Isodisomy' | 'Heterodisomy';
+export type UPDType = 'Isodisomy' | 'Heterodisomy' | 'Unknown';
 export type ParentOfOrigin = 'Maternal' | 'Paternal' | 'Unknown';
 
 export interface UPDRegion extends VariantReviewStatus {
@@ -222,63 +458,54 @@ export interface UPDRegion extends VariantReviewStatus {
   parentOfOrigin?: ParentOfOrigin;
 }
 
+// ============ ROH区域 ============
+export interface ROHRegion extends VariantReviewStatus {
+  id: string;
+  chromosome: string;
+  startPosition: number;
+  endPosition: number;
+  length: number;
+  sizeMb: number;
+  variantCount: number;
+  homozygosity: number;
+  genes: string[];
+}
+
 // ============ 标签页类型 ============
-export type TabType = 'sample-info' | 'qc' | 'snv-indel' | 'hotspot' | 'chemotherapy' | 'germline' | 'cnv-gene' | 'cnv-exon' | 'cnv-chrom' | 'fusion' | 'neoantigen' | 'biomarkers' | 'report';
+export type TabType = 'overview' | 'snv-indel' | 'cnv-segment' | 'cnv-exon' | 'str' | 'mei' | 'mt' | 'upd' | 'roh' | 'files' | OncologyResultTab;
 
 export interface TabConfig {
   id: TabType;
   label: string;
 }
 
-// 完整标签页配置（用于 DNA/常规分析任务）
 export const TAB_CONFIGS: TabConfig[] = [
-  { id: 'sample-info', label: '样本信息' },
-  { id: 'qc', label: '质控结果' },
-  { id: 'snv-indel', label: 'SNV/InDel' },
-  { id: 'hotspot', label: 'Hotspot' },
-  { id: 'germline', label: '胚系位点' },
-  { id: 'chemotherapy', label: '化疗位点' },
-  { id: 'cnv-gene', label: 'CNV(Gene)' },
-  { id: 'cnv-chrom', label: 'CNV(Chrom)' },
-  { id: 'fusion', label: 'Fusion' },
-  { id: 'neoantigen', label: '新抗原' },
-  { id: 'biomarkers', label: '其他检出' },
-  { id: 'report', label: '报告生成' },
+  { id: 'overview', label: '总览' },
+  { id: 'snv-indel', label: '变异解读' },
+  { id: 'files', label: '文件' },
 ];
 
-// RNA 融合分析专用标签页配置（简化版）
-export const FUSION_TAB_CONFIGS: TabConfig[] = [
-  { id: 'sample-info', label: '样本信息' },
-  { id: 'qc', label: '质控结果' },
-  { id: 'fusion', label: '融合表' },
-  { id: 'report', label: '报告生成' },
+export const VARIANT_TAB_CONFIGS: TabConfig[] = [
+  { id: 'snv-indel', label: SNV_INDEL_LABEL },
+  { id: 'cnv-segment', label: 'CNV(Region)' },
+  { id: 'cnv-exon', label: 'CNV(Exon)' },
+  { id: 'str', label: '动态突变' },
+  { id: 'mei', label: 'MEI' },
+  { id: 'mt', label: '线粒体' },
+  { id: 'upd', label: 'UPD' },
+  { id: 'roh', label: 'ROH' },
 ];
-
-// Pipeline 类型定义
-export type PipelineType = 'rna-fusion' | 'dna-analysis';
-
-// 根据 pipeline 名称获取类型
-export function getPipelineType(pipelineName: string): PipelineType {
-  if (pipelineName.includes('融合') || pipelineName.includes('fusion') || pipelineName.includes('RNA')) {
-    return 'rna-fusion';
-  }
-  return 'dna-analysis';
-}
-
-// 根据任务类型获取对应的标签页配置
-export function getTabConfigsByPipeline(pipelineName: string): TabConfig[] {
-  const type = getPipelineType(pipelineName);
-  return type === 'rna-fusion' ? FUSION_TAB_CONFIGS : TAB_CONFIGS;
-}
 
 // ============ 表格筛选状态 ============
 export interface TableFilterState {
   searchQuery: string;
   filters: Record<string, string | string[]>;
+  columnFilters?: Array<{ column: string; operator: 'contains' | 'not_contains' | 'equals' | 'in' | 'gt' | 'gte' | 'lt' | 'lte' | 'between' | 'is_missing' | 'is_not_missing'; value?: string | string[] }>;
   sortColumn?: string;
   sortDirection?: 'asc' | 'desc';
   page: number;
   pageSize: number;
+  geneListRevision?:number;
   geneListId?: string;  // 基因列表过滤
 }
 
@@ -296,6 +523,11 @@ export interface PaginatedResult<T> {
   total: number;
   page: number;
   pageSize: number;
+  columns?: string[];
+  columnTypes?: Record<string, 'text' | 'number' | 'enum' | 'boolean'>;
+  columnAliases?: Record<string, string[]>;
+  fieldProfileVersion?: string;
+  version?: string;
 }
 
 
@@ -429,6 +661,8 @@ export interface Section2GainCriteria {
 // ============ Section 3: 基因数量评估 ============
 
 export interface Section3Criteria {
+  defaulted?: boolean;
+  confirmed?: boolean;
   geneCount: number;
 }
 
@@ -460,11 +694,11 @@ export interface Section4UnknownInheritanceCriteria {
  * Section 4 分离证据
  */
 export interface Section4SegregationCriteria {
-  // 4F: 3+受累家属，LOD ≥ 2
+  // 4F: 每个独立家系观察到 3–4 次分离，+0.15
   '4F': number;
-  // 4G: 2个受累家属
+  // 4G: 每个独立家系观察到 5–6 次分离，+0.30
   '4G': number;
-  // 4H: 1个受累家属
+  // 4H: 每个独立家系观察到至少 7 次分离，+0.45
   '4H': number;
 }
 
@@ -495,6 +729,7 @@ export interface Section4CaseControlCriteria {
 }
 
 export interface Section4Criteria {
+  aiReviewed?: Array<{code:string;scoreHundredths:number;sourceIds:string[];reason:string}>;
   deNovo: Section4DeNovoCriteria;
   unknownInheritance: Section4UnknownInheritanceCriteria;
   segregation: Section4SegregationCriteria;
@@ -555,6 +790,7 @@ export interface Section5Criteria {
  * Loss 评估标准
  */
 export interface LossAssessmentCriteria {
+  aiReview?: {result: import('@/lib/ai-assistance').AIAssistanceResult; appliedCodes:string[]; autoFilled?:boolean; defaultedFields?:string[]; skippedCodes?:string[]; clinicalContext?:{diseaseId:string;inheritance:string}; reviewedAt:string};
   section1: Section1LossCriteria;
   section2: Section2LossCriteria;
   section3: Section3Criteria;
@@ -566,6 +802,7 @@ export interface LossAssessmentCriteria {
  * Gain 评估标准
  */
 export interface GainAssessmentCriteria {
+  aiReview?: LossAssessmentCriteria['aiReview'];
   section1: Section1GainCriteria;
   section2: Section2GainCriteria;
   section3: Section3Criteria;
@@ -588,9 +825,11 @@ export interface SectionScores {
  * CNV 致病性评估完整数据模型
  */
 export interface CNVAssessment {
+  assessmentState?: 'evaluated' | 'insufficient_evidence';
+  assessmentVersion?: string;
   id: string;
   cnvId: string;
-  cnvType: 'Amplification' | 'Deletion';
+  cnvType: CNVType;
   
   // 各部分证据选择
   criteria: LossAssessmentCriteria | GainAssessmentCriteria;
@@ -601,12 +840,14 @@ export interface CNVAssessment {
   classification: ClinGenClassification;
   
   // 元数据
+  autoEvidenceNotes?: string[];
   isAutoCalculated: boolean;
   isUserModified: boolean;
   createdAt: string;
   updatedAt: string;
   createdBy?: string;
   updatedBy?: string;
+  adjustmentVersion?: number;
 }
 
 /**

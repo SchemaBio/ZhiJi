@@ -2,17 +2,25 @@
   "name": "@schema/web-somatic",
   "version": "0.1.0",
   "private": true,
-  "description": "知几：肿瘤基因组分析前端，默认对接开源后端 Loligo",
+  "description": "知几肿瘤分析初始基线，当前仍使用遗传分析功能",
   "packageManager": "pnpm@9.15.9",
+  "pnpm": {
+    "patchedDependencies": {
+      "@schema/ui-kit@0.1.0": "patches/@schema__ui-kit@0.1.0.patch"
+    }
+  },
   "scripts": {
     "dev": "next dev -p 3002",
     "test": "vitest run",
-    "build": "next build",
-    "start": "next start",
+    "build": "node scripts/copy-duckdb-assets.mjs && next build",
+    "predev": "node scripts/copy-duckdb-assets.mjs",
+    "start": "next start -p 3002",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@duckdb/duckdb-wasm": "1.32.0",
+    "@page-agent/ui": "1.8.2",
     "@radix-ui/react-popover": "^1.0.7",
     "@schema/ui-kit": "github:SchemaBio/ui-kit",
     "clsx": "^2.1.0",
@@ -21,10 +29,13 @@
     "lucide-react": "^0.344.0",
     "mammoth": "^1.8.0",
     "next": "^16.2.6",
-    "page-agent": "^1.7.0",
+    "next-intl": "^4.14.9",
+    "page-agent": "1.8.2",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "tailwind-merge": "^2.2.0"
+    "read-excel-file": "^9.3.12",
+    "tailwind-merge": "^2.2.1",
+    "write-excel-file": "^4.1.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "6.6.3",

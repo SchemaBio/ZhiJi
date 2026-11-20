@@ -1,667 +1,408 @@
 'use client';
+import { PermissionEditor } from '@/components/shared/PermissionEditor';
+import { errorText } from '@/i18n/errors';
+
+import { useText } from '@/i18n/useText';
+import { chineseText, translateUI, localizeDisplay, type TextTranslator } from '@/i18n/text';
+
+import { ActionButton as Button, ActionButton } from '@/components/shared/ActionButton';
+
+import { AppModal, EmptyState } from '@/components/shared';
+import { HoverHint } from '@/components/shared/HoverHint';
+
 
 import * as React from 'react';
-import { Button, Input, Select, FormItem, Modal, ModalHeader, ModalBody, ModalFooter, DataTable, Tag, Checkbox } from '@schema/ui-kit';
+import { Input, Select, FormItem, DataTable } from '@schema/ui-kit';
+import { Tag } from '@/components/shared/Tag';
 import type { Column } from '@schema/ui-kit';
-import { Plus, Pencil, Trash2, Search, Users, Shield } from 'lucide-react';
+import { CheckCircle2, Loader2, Search, Shield, Trash2, Users, XCircle } from 'lucide-react';
+import type { SystemRole, User } from '@/types/user';
+import { approveUser, createUser, deleteUser, listPendingUsers, listUsers, rejectUser, updateUser } from '@/lib/users';
 
-// 页面/功能权限定义
-export const PERMISSIONS = [
-  { id: 'samples_view', name: '样本管理-查看', module: '样本管理' },
-  { id: 'samples_create', name: '样本管理-新建', module: '样本管理' },
-  { id: 'samples_edit', name: '样本管理-编辑', module: '样本管理' },
-  { id: 'samples_delete', name: '样本管理-删除', module: '样本管理' },
-  { id: 'data_view', name: '数据管理-查看', module: '数据管理' },
-  { id: 'data_import', name: '数据管理-导入', module: '数据管理' },
-  { id: 'data_export', name: '数据管理-导出', module: '数据管理' },
-  { id: 'data_delete', name: '数据管理-删除', module: '数据管理' },
-  { id: 'analysis_view', name: '分析中心-查看', module: '分析中心' },
-  { id: 'analysis_create', name: '分析中心-新建任务', module: '分析中心' },
-  { id: 'analysis_interpret', name: '分析中心-变异解读', module: '分析中心' },
-  { id: 'analysis_report', name: '分析中心-生成报告', module: '分析中心' },
-  { id: 'analysis_review', name: '分析中心-报告审核', module: '分析中心' },
-  { id: 'settings_view', name: '系统设置-查看', module: '系统设置' },
-  { id: 'settings_permissions', name: '系统设置-权限管理', module: '系统设置' },
-] as const;
-
-export type PermissionId = typeof PERMISSIONS[number]['id'];
-
-// 分组接口
-interface Group {
-  id: string;
-  name: string;
-  description: string;
-  permissions: PermissionId[];
-  createdAt: string;
-  isSystem?: boolean; // 系统预设分组不可删除
-}
-
-// 用户接口
-interface User {
-  id: string;
-  name: string;
-  email: string;
-  groupId: string;
-  createdAt: string;
-  status: 'active' | 'inactive';
-}
-
-// 预设分组
-const defaultGroups: Group[] = [
-  {
-    id: 'admin',
-    name: '管理员',
-    description: '拥有所有权限',
-    permissions: PERMISSIONS.map(p => p.id),
-    createdAt: '2024-01-01',
-    isSystem: true,
-  },
-  {
-    id: 'lab_technician',
-    name: '实验员',
-    description: '负责样本管理',
-    permissions: ['samples_view', 'samples_create', 'samples_edit', 'data_view'],
-    createdAt: '2024-01-01',
-    isSystem: true,
-  },
-  {
-    id: 'bioinformatics',
-    name: '生信工程师',
-    description: '负责数据处理和分析',
-    permissions: ['samples_view', 'data_view', 'data_import', 'data_export', 'analysis_view', 'analysis_create'],
-    createdAt: '2024-01-01',
-    isSystem: true,
-  },
-  {
-    id: 'interpreter',
-    name: '解读工程师',
-    description: '负责变异解读',
-    permissions: ['samples_view', 'data_view', 'analysis_view', 'analysis_interpret', 'analysis_report'],
-    createdAt: '2024-01-01',
-    isSystem: true,
-  },
-  {
-    id: 'reviewer',
-    name: '报告审核',
-    description: '负责报告审核',
-    permissions: ['samples_view', 'data_view', 'analysis_view', 'analysis_review'],
-    createdAt: '2024-01-01',
-    isSystem: true,
-  },
+const SYSTEM_ROLES: Array<{ id: SystemRole; name: string; description: string }> = [
+  { id: 'PLATFORM_ADMIN', name: '平台管理员', description: '自部署环境的管理员，可创建子用户并分配系统角色' },
+  { id: 'ORG_USER', name: '机构用户', description: '自部署环境的子用户，按管理员授予的角色使用业务功能' },
 ];
 
-// 模拟用户数据
-const mockUsers: User[] = [
-  { id: '1', name: '张三', email: 'zhangsan@example.com', groupId: 'admin', createdAt: '2024-01-01', status: 'active' },
-  { id: '2', name: '李四', email: 'lisi@example.com', groupId: 'lab_technician', createdAt: '2024-02-15', status: 'active' },
-  { id: '3', name: '王五', email: 'wangwu@example.com', groupId: 'bioinformatics', createdAt: '2024-03-20', status: 'active' },
-  { id: '4', name: '赵六', email: 'zhaoliu@example.com', groupId: 'interpreter', createdAt: '2024-04-10', status: 'inactive' },
-  { id: '5', name: '钱七', email: 'qianqi@example.com', groupId: 'reviewer', createdAt: '2024-05-05', status: 'active' },
-];
+const roleVariant: Record<SystemRole, 'warning' | 'info'> = {
+  PLATFORM_ADMIN: 'warning',
+  ORG_USER: 'info',
+};
 
-type TabType = 'groups' | 'users';
-
-export function PermissionsManagement() {
-  const [activeTab, setActiveTab] = React.useState<TabType>('groups');
-  const [groups, setGroups] = React.useState<Group[]>(defaultGroups);
-  const [users, setUsers] = React.useState<User[]>(mockUsers);
-
-  return (
-    <div className="space-y-4">
-      {/* Tab 切换 */}
-      <div className="flex border-b border-border">
-        <button
-          onClick={() => setActiveTab('groups')}
-          className={`
-            flex items-center gap-2 px-4 py-2 text-sm font-medium
-            border-b-2 -mb-px transition-colors
-            ${activeTab === 'groups'
-              ? 'border-accent-emphasis text-accent-fg'
-              : 'border-transparent text-fg-muted hover:text-fg-default'
-            }
-          `}
-        >
-          <Shield className="w-4 h-4" />
-          分组管理
-        </button>
-        <button
-          onClick={() => setActiveTab('users')}
-          className={`
-            flex items-center gap-2 px-4 py-2 text-sm font-medium
-            border-b-2 -mb-px transition-colors
-            ${activeTab === 'users'
-              ? 'border-accent-emphasis text-accent-fg'
-              : 'border-transparent text-fg-muted hover:text-fg-default'
-            }
-          `}
-        >
-          <Users className="w-4 h-4" />
-          用户管理
-        </button>
-      </div>
-
-      {activeTab === 'groups' && (
-        <GroupManagement groups={groups} setGroups={setGroups} />
-      )}
-      {activeTab === 'users' && (
-        <UserManagement users={users} setUsers={setUsers} groups={groups} />
-      )}
-    </div>
-  );
+function roleName(role: SystemRole, t: TextTranslator): string {
+  return t(role === 'PLATFORM_ADMIN' ? 'settings.platformAdministrator02926d' : 'settings.organizationUser568bac');
 }
 
-// 分组管理组件
-interface GroupManagementProps {
-  groups: Group[];
-  setGroups: React.Dispatch<React.SetStateAction<Group[]>>;
+function formatTime(value: string, t: TextTranslator = chineseText): string {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(t.locale, { hour12: false });
 }
 
-function GroupManagement({ groups, setGroups }: GroupManagementProps) {
-  const [isModalOpen, setIsModalOpen] = React.useState(false);
-  const [isDeleteModalOpen, setIsDeleteModalOpen] = React.useState(false);
-  const [editingGroup, setEditingGroup] = React.useState<Group | null>(null);
-  const [groupToDelete, setGroupToDelete] = React.useState<Group | null>(null);
-  const [groupForm, setGroupForm] = React.useState({
-    name: '',
-    description: '',
-    permissions: [] as PermissionId[],
-  });
-
-  const handleAddGroup = () => {
-    setEditingGroup(null);
-    setGroupForm({ name: '', description: '', permissions: [] });
-    setIsModalOpen(true);
-  };
-
-  const handleEditGroup = (group: Group) => {
-    setEditingGroup(group);
-    setGroupForm({
-      name: group.name,
-      description: group.description,
-      permissions: [...group.permissions],
-    });
-    setIsModalOpen(true);
-  };
-
-  const handleDeleteClick = (group: Group) => {
-    setGroupToDelete(group);
-    setIsDeleteModalOpen(true);
-  };
-
-  const handleSaveGroup = () => {
-    if (!groupForm.name) {
-      alert('请填写分组名称');
-      return;
-    }
-
-    if (editingGroup) {
-      setGroups((prev) =>
-        prev.map((g) =>
-          g.id === editingGroup.id
-            ? { ...g, name: groupForm.name, description: groupForm.description, permissions: groupForm.permissions }
-            : g
-        )
-      );
-    } else {
-      const newGroup: Group = {
-        id: String(Date.now()),
-        name: groupForm.name,
-        description: groupForm.description,
-        permissions: groupForm.permissions,
-        createdAt: new Date().toISOString().split('T')[0],
-      };
-      setGroups((prev) => [...prev, newGroup]);
-    }
-    setIsModalOpen(false);
-  };
-
-  const handleDeleteGroup = () => {
-    if (groupToDelete) {
-      setGroups((prev) => prev.filter((g) => g.id !== groupToDelete.id));
-      setIsDeleteModalOpen(false);
-      setGroupToDelete(null);
-    }
-  };
-
-  const handlePermissionToggle = (permissionId: PermissionId) => {
-    setGroupForm((prev) => ({
-      ...prev,
-      permissions: prev.permissions.includes(permissionId)
-        ? prev.permissions.filter((p) => p !== permissionId)
-        : [...prev.permissions, permissionId],
-    }));
-  };
-
-  const handleModuleToggle = (module: string) => {
-    const modulePermissions = PERMISSIONS.filter((p) => p.module === module).map((p) => p.id);
-    const allSelected = modulePermissions.every((p) => groupForm.permissions.includes(p));
-
-    setGroupForm((prev) => ({
-      ...prev,
-      permissions: allSelected
-        ? prev.permissions.filter((p) => !modulePermissions.includes(p))
-        : Array.from(new Set([...prev.permissions, ...modulePermissions])),
-    }));
-  };
-
-  // 按模块分组权限
-  const permissionsByModule = React.useMemo(() => {
-    const modules: Record<string, typeof PERMISSIONS[number][]> = {};
-    PERMISSIONS.forEach((p) => {
-      if (!modules[p.module]) modules[p.module] = [];
-      modules[p.module].push(p);
-    });
-    return modules;
-  }, []);
-
-  const columns: Column<Group>[] = [
-    { id: 'name', header: '分组名称', accessor: 'name', width: 120 },
-    { id: 'description', header: '描述', accessor: 'description', width: 200 },
-    {
-      id: 'permissions',
-      header: '权限数量',
-      accessor: (row) => (
-        <Tag variant="info">{row.permissions.length} 项权限</Tag>
-      ),
-      width: 100,
-    },
-    {
-      id: 'isSystem',
-      header: '类型',
-      accessor: (row) => (
-        <Tag variant={row.isSystem ? 'warning' : 'neutral'}>
-          {row.isSystem ? '系统预设' : '自定义'}
-        </Tag>
-      ),
-      width: 100,
-    },
-    { id: 'createdAt', header: '创建时间', accessor: 'createdAt', width: 120 },
-    {
-      id: 'actions',
-      header: '操作',
-      accessor: (row) => (
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="small"
-            iconOnly
-            onClick={(e) => {
-              e.stopPropagation();
-              handleEditGroup(row);
-            }}
-            aria-label="编辑"
-          >
-            <Pencil className="w-4 h-4" />
-          </Button>
-          {!row.isSystem && (
-            <Button
-              variant="ghost"
-              size="small"
-              iconOnly
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDeleteClick(row);
-              }}
-              aria-label="删除"
-            >
-              <Trash2 className="w-4 h-4 text-danger-fg" />
-            </Button>
-          )}
-        </div>
-      ),
-      width: 100,
-    },
-  ];
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-fg-muted">管理用户分组及其权限配置</p>
-        <Button variant="primary" leftIcon={<Plus className="w-4 h-4" />} onClick={handleAddGroup}>
-          新增分组
-        </Button>
-      </div>
-
-      <DataTable data={groups} columns={columns} rowKey="id" density="default" striped />
-
-      {/* 新增/编辑分组弹窗 */}
-      <Modal open={isModalOpen} onOpenChange={setIsModalOpen} size="large">
-        <ModalHeader>{editingGroup ? '编辑分组' : '新增分组'}</ModalHeader>
-        <ModalBody className="max-h-[70vh]">
-          <div className="space-y-6">
-            <div className="grid grid-cols-2 gap-4">
-              <FormItem label="分组名称" required>
-                <Input
-                  value={groupForm.name}
-                  onChange={(e) => setGroupForm((prev) => ({ ...prev, name: e.target.value }))}
-                  placeholder="请输入分组名称"
-                  disabled={editingGroup?.isSystem}
-                />
-              </FormItem>
-              <FormItem label="描述">
-                <Input
-                  value={groupForm.description}
-                  onChange={(e) => setGroupForm((prev) => ({ ...prev, description: e.target.value }))}
-                  placeholder="请输入分组描述"
-                />
-              </FormItem>
-            </div>
-
-            {/* 权限勾选表 */}
-            <div>
-              <h4 className="text-sm font-medium text-fg-default mb-3">权限配置</h4>
-              <div className="border border-border rounded-lg overflow-hidden">
-                <table className="w-full">
-                  <thead>
-                    <tr className="bg-canvas-subtle">
-                      <th className="px-4 py-2 text-left text-sm font-medium text-fg-default border-b border-border w-40">
-                        功能模块
-                      </th>
-                      <th className="px-4 py-2 text-left text-sm font-medium text-fg-default border-b border-border">
-                        权限项
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(permissionsByModule).map(([module, permissions]) => {
-                      const modulePermissionIds = permissions.map((p) => p.id);
-                      const allSelected = modulePermissionIds.every((p) => groupForm.permissions.includes(p));
-                      const someSelected = modulePermissionIds.some((p) => groupForm.permissions.includes(p));
-
-                      return (
-                        <tr key={module} className="border-b border-border last:border-b-0">
-                          <td className="px-4 py-3 align-top">
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <Checkbox
-                                checked={allSelected}
-                                indeterminate={someSelected && !allSelected}
-                                onChange={() => handleModuleToggle(module)}
-                              />
-                              <span className="text-sm font-medium text-fg-default">{module}</span>
-                            </label>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex flex-wrap gap-x-6 gap-y-2">
-                              {permissions.map((permission) => (
-                                <label key={permission.id} className="flex items-center gap-2 cursor-pointer">
-                                  <Checkbox
-                                    checked={groupForm.permissions.includes(permission.id)}
-                                    onChange={() => handlePermissionToggle(permission.id)}
-                                  />
-                                  <span className="text-sm text-fg-default">
-                                    {permission.name.split('-')[1]}
-                                  </span>
-                                </label>
-                              ))}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        </ModalBody>
-        <ModalFooter>
-          <Button variant="secondary" onClick={() => setIsModalOpen(false)}>
-            取消
-          </Button>
-          <Button variant="primary" onClick={handleSaveGroup}>
-            {editingGroup ? '保存' : '创建'}
-          </Button>
-        </ModalFooter>
-      </Modal>
-
-      {/* 删除确认弹窗 */}
-      <Modal open={isDeleteModalOpen} onOpenChange={setIsDeleteModalOpen} size="small">
-        <ModalHeader>确认删除</ModalHeader>
-        <ModalBody>
-          <p>确定要删除分组 <strong>{groupToDelete?.name}</strong> 吗？此操作不可撤销。</p>
-        </ModalBody>
-        <ModalFooter>
-          <Button variant="secondary" onClick={() => setIsDeleteModalOpen(false)}>
-            取消
-          </Button>
-          <Button variant="danger" onClick={handleDeleteGroup}>
-            删除
-          </Button>
-        </ModalFooter>
-      </Modal>
-    </div>
-  );
-}
-
-// 用户管理组件
-interface UserManagementProps {
-  users: User[];
-  setUsers: React.Dispatch<React.SetStateAction<User[]>>;
-  groups: Group[];
-}
-
-function UserManagement({ users, setUsers, groups }: UserManagementProps) {
+export function PermissionsManagement({ currentUserId }: { currentUserId?: string } = {}) {
+  const t = useText();
+  const [users, setUsers] = React.useState<User[]>([]);
+  const [pendingUsers, setPendingUsers] = React.useState<User[]>([]);
   const [searchQuery, setSearchQuery] = React.useState('');
-  const [isModalOpen, setIsModalOpen] = React.useState(false);
-  const [isDeleteModalOpen, setIsDeleteModalOpen] = React.useState(false);
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [isSaving, setIsSaving] = React.useState(false);
+  const [moderatingUserId, setModeratingUserId] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
   const [editingUser, setEditingUser] = React.useState<User | null>(null);
+  const [createOpen, setCreateOpen] = React.useState(false);
+  const [createError, setCreateError] = React.useState<string | null>(null);
+  const [createForm, setCreateForm] = React.useState({ name: '', email: '', password: '', permissions: [] as string[], systemRole: 'ORG_USER' as SystemRole });
   const [userToDelete, setUserToDelete] = React.useState<User | null>(null);
   const [userForm, setUserForm] = React.useState({
     name: '',
-    email: '',
-    groupId: '',
-    password: '',
+    systemRole: 'ORG_USER' as SystemRole,
+    permissions: [] as string[],
+    isActive: true,
   });
 
-  const filteredUsers = React.useMemo(() => {
-    if (!searchQuery) return users;
-    const query = searchQuery.toLowerCase();
-    return users.filter(
-      (user) =>
-        user.name.toLowerCase().includes(query) ||
-        user.email.toLowerCase().includes(query)
-    );
-  }, [users, searchQuery]);
+  const loadUsers = React.useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const [result, pending] = await Promise.all([
+        listUsers({ page: 1, pageSize: 100, search: searchQuery.trim() || undefined }),
+        listPendingUsers(),
+      ]);
+      setUsers(result.items);
+      setPendingUsers(pending);
+    } catch (err) {
+      setError(err instanceof Error ? errorText(err, t) : t("settings.unableToLoadUsers24ee20"));
+      setUsers([]);
+      setPendingUsers([]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [searchQuery, t]);
 
-  const handleAddUser = () => {
-    setEditingUser(null);
-    setUserForm({ name: '', email: '', groupId: groups[0]?.id || '', password: '' });
-    setIsModalOpen(true);
-  };
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadUsers();
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [loadUsers]);
 
-  const handleEditUser = (user: User) => {
+  const openEditModal = (user: User) => {
+    setError(null);
     setEditingUser(user);
-    setUserForm({ name: user.name, email: user.email, groupId: user.groupId, password: '' });
-    setIsModalOpen(true);
+    setUserForm({
+      name: user.name,
+      systemRole: user.systemRole,
+      permissions: user.systemRole === 'PLATFORM_ADMIN' ? [] : user.permissions ?? [],
+      isActive: user.isActive,
+    });
   };
 
-  const handleDeleteClick = (user: User) => {
-    setUserToDelete(user);
-    setIsDeleteModalOpen(true);
+  const resetCreateForm = () => setCreateForm({ name: '', email: '', password: '', permissions: [] as string[], systemRole: 'ORG_USER' });
+  const handleCreateUser = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setCreateError(null);
+    setIsSaving(true);
+    try {
+      await createUser(createForm);
+      setCreateOpen(false);
+      resetCreateForm();
+      await loadUsers();
+    } catch (err) {
+      setCreateError(errorText(err, t));
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const handleSaveUser = () => {
-    if (!userForm.name || !userForm.email || !userForm.groupId) {
-      alert('请填写必填项');
+  const handleSaveUser = async () => {
+    if (!editingUser) return;
+    if (!userForm.name.trim()) {
+      setError(t("settings.enterAName71883c"));
       return;
     }
-    if (!editingUser && !userForm.password) {
-      alert('请设置初始密码');
-      return;
+    setIsSaving(true);
+    setError(null);
+    try {
+      const updated = await updateUser(editingUser.id, {
+        name: userForm.name.trim(),
+        systemRole: userForm.systemRole,
+        permissions: userForm.permissions,
+        isActive: userForm.isActive,
+      });
+      setUsers((prev) => prev.map((user) => (user.id === updated.id ? updated : user)));
+      setEditingUser(null);
+    } catch (err) {
+      setError(err instanceof Error ? errorText(err, t) : t("settings.unableToSaveUserb23480"));
+    } finally {
+      setIsSaving(false);
     }
-
-    if (editingUser) {
-      setUsers((prev) =>
-        prev.map((u) =>
-          u.id === editingUser.id
-            ? { ...u, name: userForm.name, email: userForm.email, groupId: userForm.groupId }
-            : u
-        )
-      );
-    } else {
-      const newUser: User = {
-        id: String(Date.now()),
-        name: userForm.name,
-        email: userForm.email,
-        groupId: userForm.groupId,
-        createdAt: new Date().toISOString().split('T')[0],
-        status: 'active',
-      };
-      setUsers((prev) => [...prev, newUser]);
-    }
-    setIsModalOpen(false);
   };
 
-  const handleDeleteUser = () => {
-    if (userToDelete) {
-      setUsers((prev) => prev.filter((u) => u.id !== userToDelete.id));
-      setIsDeleteModalOpen(false);
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
+    if (!currentUserId || String(userToDelete.id) === String(currentUserId)) {
+      setError(t('backendErrors.cannotDeleteSelf'));
+      return;
+    }
+    setIsSaving(true);
+    setError(null);
+    try {
+      await deleteUser(userToDelete.id);
+      setUsers((prev) => prev.filter((user) => user.id !== userToDelete.id));
       setUserToDelete(null);
+    } catch (err) {
+      setError(err instanceof Error ? errorText(err, t) : t("settings.unableToDeleteUser81d451"));
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const getGroupName = (groupId: string) => {
-    return groups.find((g) => g.id === groupId)?.name || groupId;
+  const handleModerateUser = async (user: User, decision: 'approve' | 'reject') => {
+    setModeratingUserId(user.id);
+    setError(null);
+    try {
+      if (decision === 'approve') {
+        await approveUser(user.id);
+      } else {
+        await rejectUser(user.id);
+      }
+      setPendingUsers((prev) => prev.filter((item) => item.id !== user.id));
+      await loadUsers();
+    } catch (err) {
+      setError(err instanceof Error ? errorText(err, t) : decision === 'approve' ? t("settings.unableToApproveUser7d237e") : t("settings.unableToRejectUser8fd60f"));
+    } finally {
+      setModeratingUserId(null);
+    }
   };
 
   const columns: Column<User>[] = [
-    { id: 'name', header: '姓名', accessor: 'name', width: 120 },
-    { id: 'email', header: '邮箱', accessor: 'email', width: 200 },
+    { id: 'permissions', header: t('permissions.title'), accessor: row => row.systemRole === 'PLATFORM_ADMIN' ? t('permissions.all') : `${row.permissions?.length ?? 0} / 9`, width: 130 },
+    { id: 'name', header: t("samples.namebe4c26"), accessor: 'name', width: 120, align: 'center' },
+    { id: 'email', header: t("settings.email9ed627"), accessor: 'email', width: 220, align: 'center' },
     {
-      id: 'group',
-      header: '所属分组',
-      accessor: (row) => <Tag variant="info">{getGroupName(row.groupId)}</Tag>,
-      width: 120,
+      id: 'systemRole',
+      header: t("settings.systemRole97946d"),
+      accessor: (row) => <Tag variant={roleVariant[row.systemRole]}>{roleName(row.systemRole, t)}</Tag>,
+      width: 130,
+      align: 'center',
     },
     {
       id: 'status',
-      header: '状态',
+      header: t("admin.status62e951"),
       accessor: (row) => (
-        <Tag variant={row.status === 'active' ? 'success' : 'neutral'}>
-          {row.status === 'active' ? '启用' : '禁用'}
-        </Tag>
+        <Tag variant={row.isActive ? 'success' : 'neutral'}>{row.isActive ? t("admin.enabledd4e9ca") : t("admin.disabledd989e5")}</Tag>
       ),
-      width: 80,
+      width: 90,
+      align: 'center',
     },
-    { id: 'createdAt', header: '创建时间', accessor: 'createdAt', width: 120 },
+    {
+      id: 'approvalStatus',
+      header: t("settings.approvalStatus936237"),
+      accessor: (row) => row.approvalStatus === 'approved' ? t("settings.approved4b3c96") : row.approvalStatus === 'pending' ? t("settings.awaitingApproval57fce0") : row.approvalStatus === 'rejected' ? t("settings.rejected349c9e") : '—',
+      width: 100,
+      align: 'center',
+    },
+    {
+      id: 'createdAt',
+      header: t("admin.createdAt84e380"),
+      accessor: (row) => formatTime(row.createdAt, t),
+      width: 180,
+      align: 'center',
+    },
     {
       id: 'actions',
-      header: '操作',
+      header: t("admin.actionsf3ea6d"),
       accessor: (row) => (
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="small"
-            iconOnly
-            onClick={(e) => {
-              e.stopPropagation();
-              handleEditUser(row);
-            }}
-            aria-label="编辑"
-          >
-            <Pencil className="w-4 h-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="small"
-            iconOnly
-            onClick={(e) => {
-              e.stopPropagation();
-              handleDeleteClick(row);
-            }}
-            aria-label="删除"
-          >
-            <Trash2 className="w-4 h-4 text-danger-fg" />
-          </Button>
+        <div className="flex items-center justify-center gap-1">
+          <HoverHint content={t("admin.edita7f814")}><ActionButton size="small" iconOnly action="edit" variant="ghost"
+            className="p-1.5 rounded hover:bg-canvas-subtle text-fg-muted hover:text-accent-fg transition-colors"
+
+            onClick={() => openEditModal(row)}
+           /></HoverHint>
+          <HoverHint content={t(String(row.id) === String(currentUserId) ? 'backendErrors.cannotDeleteSelf' : 'data.delete3755f5')}><span className="inline-flex" tabIndex={String(row.id) === String(currentUserId) ? 0 : undefined}><ActionButton size="small" iconOnly action="delete" variant="ghost"
+            className="p-1.5 rounded hover:bg-danger-subtle text-fg-muted hover:text-danger-fg transition-colors"
+            disabled={!currentUserId || String(row.id) === String(currentUserId)}
+            aria-label={t(String(row.id) === String(currentUserId) ? 'backendErrors.cannotDeleteSelf' : 'data.delete3755f5')}
+            onClick={() => setUserToDelete(row)}
+           /></span></HoverHint>
         </div>
       ),
-      width: 100,
+      width: 90,
+      align: 'center',
     },
   ];
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="w-64">
+    <div className="space-y-6">
+      <div className="yj-panel p-4 text-sm leading-6 text-fg-muted">{t('settings.accountManagementGuide')}</div>
+      {pendingUsers.length > 0 && (
+        <div className="yj-panel p-4">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-medium text-fg-default">{t("settings.registrationsAwaitingApproval4070f5")}</h3>
+              <p className="mt-1 text-xs text-fg-muted">{t("settings.reviewAndManageNewUserAccountsaa8cfd")}</p>
+            </div>
+            <Tag variant="warning">{pendingUsers.length} {t("settings.awaitingApproval476a6c")}</Tag>
+          </div>
+          <div className="divide-y divide-border-default">
+            {pendingUsers.map((user) => (
+              <div key={user.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-fg-default">{user.name || user.email}</div>
+                  <div className="truncate text-xs text-fg-muted">
+                    {user.email} · {formatTime(user.createdAt, t)}
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    leftIcon={<XCircle className="h-4 w-4" />}
+                    onClick={() => void handleModerateUser(user, 'reject')}
+                    disabled={moderatingUserId === user.id}
+                  >
+                    {t("settings.reject03e210")}</Button>
+                  <Button
+                    variant="primary"
+                    leftIcon={<CheckCircle2 className="h-4 w-4" />}
+                    onClick={() => void handleModerateUser(user, 'approve')}
+                    disabled={moderatingUserId === user.id}
+                  >
+                    {t("settings.approvedcc423")}</Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="yj-toolbar-panel">
+        <Button action="add" variant="primary" onClick={() => { setCreateError(null); setCreateOpen(true); }}>{t('settings.createAccount')}</Button>
+        <div className="w-full sm:w-72">
           <Input
-            placeholder="搜索用户..."
+            placeholder={t("settings.searchAccount")}
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(event) => setSearchQuery(event.target.value)}
             leftElement={<Search className="w-4 h-4" />}
           />
         </div>
-        <Button variant="primary" leftIcon={<Plus className="w-4 h-4" />} onClick={handleAddUser}>
-          新增用户
-        </Button>
+        <Button action="refresh" variant="secondary" className="yj-tool-button"  onClick={() => void loadUsers()} disabled={isLoading}>
+          {t("admin.refresh38108e")}</Button>
       </div>
 
-      <DataTable data={filteredUsers} columns={columns} rowKey="id" density="default" striped />
+      {error && (
+        <div role="alert" className="rounded-md border border-danger-muted bg-danger-subtle px-4 py-3 text-sm text-danger-fg">
+          {error}
+        </div>
+      )}
 
-      {/* 新增/编辑用户弹窗 */}
-      <Modal open={isModalOpen} onOpenChange={setIsModalOpen} size="small">
-        <ModalHeader>{editingUser ? '编辑用户' : '新增用户'}</ModalHeader>
-        <ModalBody>
+      {isLoading ? (
+        <div className="yj-empty-state">
+          <Loader2 className="w-6 h-6 animate-spin text-accent-fg" />
+          <p className="text-fg-muted">{t("settings.loadingUsers31fb0d")}</p>
+        </div>
+      ) : error && users.length === 0 ? null : users.length === 0 ? (
+        <EmptyState className="yj-panel" icon={<Users />} title={searchQuery.trim() ? t("settings.noMatchingUsersc766ea") : t("settings.noUsers3d268b")} description={searchQuery.trim() ? t("pipeline.adjustYourSearchAndRetryf591c7") : undefined} />
+      ) : (
+        <div className="[&_table]:min-w-[930px]"><DataTable data={users} columns={localizeDisplay(columns, t)} rowKey="id" density="default" striped /></div>
+      )}
+
+      <div className="yj-panel overflow-hidden">
+        <div className="yj-panel-header"><h3 className="yj-section-title">{t("settings.systemRole97946d")}</h3></div>
+        <div className="grid grid-cols-1 divide-y divide-[var(--yj-border-subtle)] md:grid-cols-2 md:divide-x md:divide-y-0">
+          {SYSTEM_ROLES.map((role) => (
+            <div key={role.id} className="p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Shield className="w-4 h-4 text-accent-fg" />
+                <h4 className="text-sm font-medium text-fg-default">{roleName(role.id, t)}</h4>
+              </div>
+              <p className="text-xs text-fg-muted">{translateUI(role.description, t)}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <AppModal open={createOpen} onOpenChange={open => { if (!isSaving) { setCreateOpen(open); if (!open) resetCreateForm(); } }} size="medium" title={t('settings.createAccount')} footer={<>
+        <Button variant="secondary" disabled={isSaving} onClick={() => { setCreateOpen(false); resetCreateForm(); }}>{t('admin.cancel4d0b46')}</Button>
+        <Button type="submit" form="create-platform-user" variant="primary" loading={isSaving}>{t('settings.createAccount')}</Button>
+      </>}>
+        <form id="create-platform-user" onSubmit={handleCreateUser} className="space-y-4">
+          {createError && <p role="alert" className="text-sm text-danger-fg">{createError}</p>}
+          <FormItem label={t('samples.namebe4c26')} required><Input aria-label={t('samples.namebe4c26')} required value={createForm.name} onChange={e => setCreateForm(prev => ({ ...prev, name: e.target.value }))} /></FormItem>
+          <FormItem label={t('settings.email9ed627')} required><Input aria-label={t('settings.email9ed627')} type="email" autoComplete="off" required value={createForm.email} onChange={e => setCreateForm(prev => ({ ...prev, email: e.target.value }))} /></FormItem>
+          <FormItem label={t('settings.initialPassword')} required><Input aria-label={t('settings.initialPassword')} type="password" autoComplete="new-password" required minLength={8} value={createForm.password} onChange={e => setCreateForm(prev => ({ ...prev, password: e.target.value }))} /><p className="mt-1 text-xs text-fg-muted">{t('settings.passwordGuide')}</p></FormItem>
+          <FormItem label={t('settings.systemRole97946d')} required><Select options={localizeDisplay(SYSTEM_ROLES.map(role => ({ value: role.id, label: roleName(role.id, t) })), t)} value={createForm.systemRole} onChange={value => setCreateForm(prev => ({ ...prev, permissions: [], systemRole: (Array.isArray(value) ? value[0] : value) as SystemRole }))} /></FormItem>
+          <PermissionEditor administrator={createForm.systemRole === 'PLATFORM_ADMIN'} values={createForm.permissions} onChange={permissions => setCreateForm(prev => ({ ...prev, permissions }))} disabled={isSaving} />
+          <p className="text-xs text-fg-muted">{t('settings.createdAccountGuide')}</p>
+        </form>
+      </AppModal>
+
+      <AppModal open={Boolean(editingUser)} onOpenChange={(open) => !open && setEditingUser(null)} size="medium" title={t("settings.editUser2b8f00")} footer={<>
+          <Button variant="secondary" onClick={() => setEditingUser(null)} disabled={isSaving}>
+            {t("admin.cancel4d0b46")}</Button>
+          <Button loading={isSaving} loadingLabel={t("admin.savingd70d42")} action="save" variant="primary" onClick={handleSaveUser} disabled={isSaving}>
+            {t("data.savefadf24")}</Button>
+         </>}>
           <div className="space-y-4">
-            <FormItem label="姓名" required>
+            {error && <p role="alert" className="text-sm text-danger-fg">{error}</p>}
+            <FormItem label={t("settings.email9ed627")}>
+              <div className="break-all text-sm text-fg-default">{editingUser?.email ?? '—'}</div>
+            </FormItem>
+            <FormItem label={t("samples.namebe4c26")} required>
               <Input
+                aria-label={t("samples.namebe4c26")}
                 value={userForm.name}
-                onChange={(e) => setUserForm((prev) => ({ ...prev, name: e.target.value }))}
-                placeholder="请输入姓名"
+                onChange={(event) => setUserForm((prev) => ({ ...prev, name: event.target.value }))}
+                placeholder={t("samples.enterName675b3e")}
               />
             </FormItem>
-            <FormItem label="邮箱" required>
-              <Input
-                type="email"
-                value={userForm.email}
-                onChange={(e) => setUserForm((prev) => ({ ...prev, email: e.target.value }))}
-                placeholder="请输入邮箱"
-              />
-            </FormItem>
-            <FormItem label="所属分组" required>
+            <FormItem label={t("settings.systemRole97946d")} required>
               <Select
-                options={groups.map((g) => ({ value: g.id, label: g.name }))}
-                value={userForm.groupId}
-                onChange={(value) => setUserForm((prev) => ({ ...prev, groupId: value as string }))}
-                placeholder="请选择分组"
+                options={localizeDisplay(SYSTEM_ROLES.map((role) => ({ value: role.id, label: roleName(role.id, t) })), t)}
+                value={userForm.systemRole}
+                onChange={(value) => {
+                  const nextRole = Array.isArray(value) ? value[0] : value;
+                  setUserForm((prev) => ({ ...prev, systemRole: nextRole as SystemRole, permissions: [] }));
+                }}
               />
             </FormItem>
-            {!editingUser && (
-              <FormItem label="初始密码" required>
-                <Input
-                  type="password"
-                  value={userForm.password}
-                  onChange={(e) => setUserForm((prev) => ({ ...prev, password: e.target.value }))}
-                  placeholder="请设置初始密码"
-                />
-              </FormItem>
-            )}
+            <PermissionEditor administrator={userForm.systemRole === 'PLATFORM_ADMIN'} values={userForm.permissions} onChange={permissions => setUserForm(prev => ({ ...prev, permissions }))} disabled={isSaving} />
+            <FormItem label={t("settings.accountStatus67104f")} required>
+              <Select
+                options={[
+                  { value: 'active', label: t("admin.enabledd4e9ca") },
+                  { value: 'inactive', label: t("admin.disabledd989e5") },
+                ]}
+                value={userForm.isActive ? 'active' : 'inactive'}
+                onChange={(value) => {
+                  const nextStatus = Array.isArray(value) ? value[0] : value;
+                  setUserForm((prev) => ({ ...prev, isActive: nextStatus === 'active' }));
+                }}
+              />
+            </FormItem>
           </div>
-        </ModalBody>
-        <ModalFooter>
-          <Button variant="secondary" onClick={() => setIsModalOpen(false)}>
-            取消
-          </Button>
-          <Button variant="primary" onClick={handleSaveUser}>
-            {editingUser ? '保存' : '创建'}
-          </Button>
-        </ModalFooter>
-      </Modal>
+         </AppModal>
 
-      {/* 删除确认弹窗 */}
-      <Modal open={isDeleteModalOpen} onOpenChange={setIsDeleteModalOpen} size="small">
-        <ModalHeader>确认删除</ModalHeader>
-        <ModalBody>
-          <p>确定要删除用户 <strong>{userToDelete?.name}</strong> 吗？此操作不可撤销。</p>
-        </ModalBody>
-        <ModalFooter>
-          <Button variant="secondary" onClick={() => setIsDeleteModalOpen(false)}>
-            取消
-          </Button>
-          <Button variant="danger" onClick={handleDeleteUser}>
-            删除
-          </Button>
-        </ModalFooter>
-      </Modal>
+      <AppModal open={Boolean(userToDelete)} onOpenChange={(open) => !open && setUserToDelete(null)} size="small" title={t("data.confirmDeletion3c06ab")} footer={<>
+          <Button variant="secondary" onClick={() => setUserToDelete(null)} disabled={isSaving}>
+            {t("admin.cancel4d0b46")}</Button>
+          <Button loading={isSaving} loadingLabel={t("settings.deleting6f941d")} variant="danger" onClick={handleDeleteUser} disabled={isSaving}>
+            {t("data.delete3755f5")}</Button>
+         </>}>
+          {error && <p role="alert" className="text-sm text-danger-fg">{error}</p>}
+          <div className="flex flex-col items-center text-center py-4">
+            <div className="w-12 h-12 rounded-full bg-danger-subtle flex items-center justify-center mb-4">
+              <Trash2 className="w-6 h-6 text-danger-fg" />
+            </div>
+            <p className="text-fg-default mb-2">{t("settings.deleteThisUser332e3a")}</p>
+            {userToDelete && (
+              <p className="text-sm text-fg-muted">
+                {userToDelete.name}（{userToDelete.email}）
+              </p>
+            )}
+            <p className="text-xs text-fg-muted mt-3">{t("settings.thisAccountWillNoLongerBeAble5b44aa")}</p>
+          </div>
+         </AppModal>
     </div>
   );
 }

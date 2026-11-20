@@ -1,18 +1,33 @@
+import { LocalizedError } from '@/i18n/errors';
+import { normalizeParentFields } from './sample-parents';
 import { api } from './api';
-import { readResourcePages } from './resource-pages';
-import type { Gender, NucleicAcidType, Sample, SampleStatus, SampleType } from '@/app/(main)/samples/types';
+import type { OncologySampleFields, Sample, SampleDetail } from '@/app/(main)/samples/types';
+import type { DataAsset } from './data-assets';
 
-const SAMPLE_TYPES: SampleType[] = ['FFPE', '新鲜组织', '全血', 'cfDNA', '胸腹水', '骨髓', '其他'];
-const SAMPLE_STATUSES: SampleStatus[] = ['pending', 'matched', 'analyzing', 'completed'];
+export function getSampleDataLink(id: string, signal?: AbortSignal): Promise<{ read1: DataAsset | null; read2: DataAsset | null; unavailable: boolean }> {
+  return api.get(`/v1/samples/${encodeURIComponent(id)}/data-link`, { cache: 'no-store', signal });
+}
 
-export interface SampleWriteInput {
+type MaybeList<T> = T[] | { items?: T[]; data?: T[] | { items?: T[] }; total?: number };
+type SampleFormPayload = OncologySampleFields & {
+  identityPolicyAcknowledged?: boolean;
+  identityPolicyVersion?: string;
   internalId: string;
-  gender: Gender;
+  gender: Sample['gender'];
   age?: number;
-  sampleType: string;
   batch: string;
+  clinicalDiagnosis: string;
+  r1Path?: string;
+  r2Path?: string;
   remark: string;
-  clinicalDiagnosis?: string;
+};
+
+function unwrapList<T>(value: MaybeList<T>): T[] {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value.items)) return value.items;
+  if (Array.isArray(value.data)) return value.data;
+  if (value.data && !Array.isArray(value.data) && Array.isArray(value.data.items)) return value.data.items;
+  return [];
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -28,64 +43,222 @@ function rawNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
-function sharedPayload(input: SampleWriteInput) {
-  return {
-    internal_id: input.internalId.trim(),
-    gender: input.gender,
-    ...(input.age !== undefined ? { age: input.age } : {}),
-    sample_type: input.sampleType,
-    batch: input.batch,
-    remark: input.remark,
-    clinical_diagnosis: input.clinicalDiagnosis ?? '',
-  };
+function rawHpoTerms(value: unknown): { id: string; name: string }[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      const raw = asRecord(item);
+      return { id: String(raw.id ?? ''), name: String(raw.name ?? '') };
+    })
+    .filter(term => term.id);
 }
 
-export function normalizeSample(value: unknown): Sample {
+function rawStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : [];
+}
+
+function rawMatchedPair(value: unknown): Sample['matchedPair'] {
   const raw = asRecord(value);
-  const genderValue = raw.gender;
-  const gender: Gender = genderValue === 'male' || genderValue === 'female' || genderValue === 'unknown' ? genderValue : 'unknown';
-  const sampleTypeValue = rawString(raw, 'sampleType', 'sample_type', '其他');
-  const sampleType = SAMPLE_TYPES.includes(sampleTypeValue as SampleType) ? sampleTypeValue as SampleType : '其他';
-  const statusValue = rawString(raw, 'status', 'status', 'pending');
-  const status = SAMPLE_STATUSES.includes(statusValue as SampleStatus) ? statusValue as SampleStatus : 'pending';
-  const nucleic = rawString(raw, 'nucleicAcidType', 'nucleic_acid_type', 'DNA');
-  const nucleicAcidType: NucleicAcidType = nucleic === 'RNA' ? 'RNA' : 'DNA';
-  const r1 = rawString(asRecord(raw.matchedPair ?? raw.matched_pair), 'r1Path', 'r1_path');
-  const r2 = rawString(asRecord(raw.matchedPair ?? raw.matched_pair), 'r2Path', 'r2_path');
-  const paired = rawString(raw, 'pairedSampleId', 'paired_sample_id');
+  const r1Path = rawString(raw, 'r1Path', 'r1_path').trim();
+  const r2Path = rawString(raw, 'r2Path', 'r2_path').trim();
+  return r1Path && r2Path ? { r1Path, r2Path } : null;
+}
+
+export function normalizeSample(rawValue: unknown): Sample {
+  const raw = asRecord(rawValue);
+  const clinical = raw.clinicalDiagnosis ?? raw.clinical_diagnosis;
   return {
+    ...normalizeParentFields(raw),
     id: String(raw.id ?? ''),
+    origin: typeof raw.origin === 'string' ? raw.origin : undefined,
     internalId: rawString(raw, 'internalId', 'internal_id'),
-    batch: rawString(raw, 'batch', 'batch'),
-    gender,
+    gender: (raw.gender === 'male' || raw.gender === 'female' || raw.gender === 'unknown') ? raw.gender : 'unknown',
     age: rawNumber(raw.age),
-    birthDate: rawString(raw, 'birthDate', 'birth_date'),
-    sampleType,
-    nucleicAcidType,
-    tumorType: rawString(raw, 'tumorType', 'tumor_type'),
-    pairedSampleId: paired || undefined,
-    matchedPair: r1 && r2 ? { r1Path: r1, r2Path: r2 } : null,
-    dataCount: rawNumber(raw.dataCount ?? raw.data_count) ?? 0,
-    status,
+    sampleType: rawString(raw, 'sampleType', 'sample_type', '其他'),
+    cancerType: rawString(raw, 'cancerType', 'cancer_type') || undefined,
+    collectionSite: rawString(raw, 'collectionSite', 'collection_site') || undefined,
+    batch: rawString(raw, 'batch', 'batch'),
+    clinicalDiagnosis: typeof clinical === 'string'
+      ? clinical
+      : rawString(asRecord(clinical), 'mainDiagnosis', 'main_diagnosis'),
+    hpoTerms: rawHpoTerms(raw.hpoTerms ?? raw.hpo_terms),
+    matchedPair: rawMatchedPair(raw.matchedPair ?? raw.matched_pair),
+    matchStatus: rawString(raw, 'matchStatus', 'match_status', raw.matchedPair ?? raw.matched_pair ? 'matched' : 'unmatched') as Sample['matchStatus'],
+    matchMode: rawString(raw, 'matchMode', 'match_mode') as Sample['matchMode'],
+    autoMatchEnabled: raw.autoMatchEnabled === false || raw.auto_match_enabled === false ? false : true,
+    remark: rawString(raw, 'remark', 'remark'),
+    expiresAt: rawString(raw, 'expiresAt', 'expires_at') || undefined,
     createdAt: rawString(raw, 'createdAt', 'created_at'),
     updatedAt: rawString(raw, 'updatedAt', 'updated_at'),
-    remark: rawString(raw, 'remark', 'remark'),
   };
 }
 
-export async function listSamples(search = ''): Promise<Sample[]> {
-  const rows = await readResourcePages<unknown>('/v1/samples', search ? { search } : {});
-  return rows.map(normalizeSample).filter((sample) => sample.id);
+export function normalizeSampleDetail(rawValue: unknown): SampleDetail {
+  const raw = asRecord(rawValue);
+  const base = normalizeSample(raw);
+  const clinical = asRecord(raw.clinicalDiagnosis ?? raw.clinical_diagnosis);
+  const submission = asRecord(raw.submissionInfo ?? raw.submission_info);
+  const project = asRecord(raw.projectInfo ?? raw.project_info);
+  const family = asRecord(raw.familyHistory ?? raw.family_history);
+  const affectedMembers = Array.isArray(family.affectedMembers ?? family.affected_members)
+    ? (family.affectedMembers ?? family.affected_members) as unknown[]
+    : [];
+  const analysisTasks = Array.isArray(raw.analysisTasks ?? raw.analysis_tasks)
+    ? (raw.analysisTasks ?? raw.analysis_tasks) as unknown[]
+    : [];
+
+  return {
+    ...base,
+    clinicalDiagnosis: {
+      mainDiagnosis: rawString(clinical, 'mainDiagnosis', 'main_diagnosis', base.clinicalDiagnosis),
+      symptoms: Array.isArray(clinical.symptoms) ? clinical.symptoms.map(String) : [],
+      hpoTerms: rawHpoTerms(clinical.hpoTerms ?? clinical.hpo_terms ?? raw.hpoTerms ?? raw.hpo_terms),
+      onsetAge: rawString(clinical, 'onsetAge', 'onset_age'),
+      diseaseHistory: rawString(clinical, 'diseaseHistory', 'disease_history'),
+    },
+    submissionInfo: {
+      submissionDate: rawString(submission, 'submissionDate', 'submission_date'),
+      sampleCollectionDate: rawString(submission, 'sampleCollectionDate', 'sample_collection_date'),
+      sampleReceiveDate: rawString(submission, 'sampleReceiveDate', 'sample_receive_date'),
+      sampleQuality: (submission.sampleQuality === 'good' || submission.sampleQuality === 'acceptable' || submission.sampleQuality === 'poor')
+        ? submission.sampleQuality
+        : undefined,
+    },
+    projectInfo: {
+      projectId: rawString(project, 'projectId', 'project_id'),
+      projectName: rawString(project, 'projectName', 'project_name'),
+      testItems: rawStringArray(project.testItems ?? project.test_items),
+      panel: rawString(project, 'panel', 'panel'),
+      turnaroundDays: rawNumber(project.turnaroundDays ?? project.turnaround_days),
+      priority: project.priority === 'urgent' || project.priority === 'normal' ? project.priority : undefined,
+    },
+    familyHistory: {
+      hasHistory: typeof (family.hasHistory ?? family.has_history) === 'boolean' ? (family.hasHistory ?? family.has_history) as boolean : undefined,
+      affectedMembers: affectedMembers.map((member) => {
+        const item = asRecord(member);
+        return {
+          relation: rawString(item, 'relation', 'relation'),
+          condition: rawString(item, 'condition', 'condition'),
+          onsetAge: rawString(item, 'onsetAge', 'onset_age'),
+        };
+      }),
+      pedigreeNote: rawString(family, 'pedigreeNote', 'pedigree_note'),
+    },
+    analysisTasks: analysisTasks.map((task) => {
+      const item = asRecord(task);
+      return {
+        id: String(item.id ?? ''),
+        name: rawString(item, 'name', 'name'),
+        status: rawString(item, 'status', 'status'),
+        createdAt: rawString(item, 'createdAt', 'created_at'),
+      };
+    }).filter(task => task.id),
+  };
 }
 
-export async function createSample(input: SampleWriteInput): Promise<Sample> {
-  return normalizeSample(await api.post('/v1/samples', sharedPayload(input)));
+export function samplePayload(data: SampleFormPayload) {
+  const r1Path = data.r1Path?.trim();
+  const r2Path = data.r2Path?.trim();
+  if ((r1Path && !r2Path) || (!r1Path && r2Path)) {
+    throw new LocalizedError("interface.rAndRFastqPathsMustBeProvidedTogetherddfa6e", undefined, "R1 and R2 FASTQ paths must be provided together");
+  }
+  return {
+    identity_policy_acknowledged: data.identityPolicyAcknowledged,
+    identity_policy_version: data.identityPolicyVersion,
+    internal_id: data.internalId,
+    gender: data.gender,
+    age: data.age ?? null,
+    sample_type: data.sampleType.trim() || '其他',
+    ...(data.cancerType !== undefined ? { cancer_type: data.cancerType.trim() } : {}),
+    ...(data.collectionSite !== undefined ? { collection_site: data.collectionSite.trim() } : {}),
+    batch: data.batch,
+    clinical_diagnosis: data.clinicalDiagnosis,
+    ...(r1Path ? { r1_path: r1Path } : {}),
+    ...(r2Path ? { r2_path: r2Path } : {}),
+    remark: data.remark,
+  };
 }
 
-export async function updateSample(id: string, input: SampleWriteInput): Promise<Sample> {
-  return normalizeSample(await api.put(`/v1/samples/${encodeURIComponent(id)}`, sharedPayload(input)));
+export function sampleDetailPayload(data: Partial<SampleDetail>) {
+  return samplePayload({
+    internalId: data.internalId ?? '',
+    gender: data.gender ?? 'unknown',
+    age: data.age,
+    sampleType: data.sampleType ?? '其他',
+    cancerType: data.cancerType,
+    collectionSite: data.collectionSite,
+    batch: data.batch ?? '',
+    clinicalDiagnosis: data.clinicalDiagnosis?.mainDiagnosis ?? '',
+    r1Path: data.matchedPair?.r1Path,
+    r2Path: data.matchedPair?.r2Path,
+    remark: data.remark ?? '',
+  });
 }
 
-export async function deleteSample(id: string): Promise<void> {
-  await api.delete(`/v1/samples/${encodeURIComponent(id)}`);
+export async function listSamples(params: Record<string, string> = { page: '1', page_size: '100' }): Promise<Sample[]> {
+  const response = await api.get<MaybeList<unknown>>('/v1/samples', { params });
+  return unwrapList(response).map(normalizeSample).filter(sample => sample.id);
+}
+
+export async function getSampleDetail(id: string): Promise<SampleDetail | null> {
+  const response = await api.get<unknown>(`/v1/samples/${encodeURIComponent(id)}`, { cache: 'no-store' });
+  const detail = normalizeSampleDetail(response);
+  return detail.id ? detail : null;
+}
+
+export async function updateSampleHpoTerms(id: string, terms: { id: string; name: string }[]): Promise<Sample> {
+  const response = await api.put<unknown>(`/v1/samples/${encodeURIComponent(id)}`, { hpo_terms: terms });
+  return normalizeSample(response);
+}
+
+export async function updateSampleMatchedPair(
+  id: string,
+  matchedPair: { r1Path: string; r2Path: string }
+): Promise<SampleDetail> {
+  const r1Path = matchedPair.r1Path.trim();
+  const r2Path = matchedPair.r2Path.trim();
+  if (!r1Path || !r2Path) {
+    throw new LocalizedError("interface.bothRAndRFastqStorageKeysAreRequiredea02a9", undefined, "Both R1 and R2 FASTQ storage keys are required");
+  }
+  await api.put<unknown>(`/v1/samples/${encodeURIComponent(id)}`, {
+    ...(r1Path ? { r1_path: r1Path } : {}),
+    ...(r2Path ? { r2_path: r2Path } : {}),
+  });
+
+  const updated = await getSampleDetail(id);
+  if (!updated) {
+    throw new LocalizedError("interface.sampleWasUpdatedButCouldNotBeReloadedafba49", undefined, "Sample was updated but could not be reloaded");
+  }
+  return updated;
+}
+
+export async function clearSampleMatchedPair(id: string): Promise<SampleDetail> {
+  const response = await api.delete<unknown>(`/v1/samples/${encodeURIComponent(id)}/matched-pair`);
+  const detail = normalizeSampleDetail(response);
+  if (!detail.id) {
+    throw new LocalizedError("interface.sampleMatchWasClearedButTheResponseCouldNotBeParsedc1780b", undefined, "Sample match was cleared but the response could not be parsed");
+  }
+  return detail;
+}
+
+export async function bindSampleMatchedPairFromUploadJob(id: string, uploadJobId: string): Promise<SampleDetail> {
+  const response = await api.post<unknown>(
+    `/v1/samples/${encodeURIComponent(id)}/matched-pair/upload-job`,
+    { upload_job_id: uploadJobId.trim() }
+  );
+  const detail = normalizeSampleDetail(response);
+  if (!detail.id) {
+    throw new LocalizedError("interface.sampleMatchWasUpdatedButTheResponseCouldNotBeParsed3a4eeb", undefined, "Sample match was updated but the response could not be parsed");
+  }
+  return detail;
+}
+
+export async function bindSampleDataAssets(id: string, read1AssetId: string, read2AssetId: string): Promise<SampleDetail> {
+  const response = await api.put<unknown>(`/v1/samples/${encodeURIComponent(id)}/data-link`, {
+    read1_asset_id: read1AssetId,
+    read2_asset_id: read2AssetId,
+  });
+  const detail = normalizeSampleDetail(response);
+  if (!detail.id) throw new LocalizedError("display.sampleDataLinkUpdatedButTheResponse52d3eb");
+  return detail;
 }

@@ -1,4 +1,6 @@
-import type { User, UserOrganizationInfo } from './user';
+import type { SystemRole, User, UserOrganizationInfo } from './user';
+
+export type UserRole = SystemRole;
 
 export interface LoginRequest {
   email: string;
@@ -10,7 +12,9 @@ export interface LoginResponse {
   user: User;
   organizations: UserOrganizationInfo[];
   currentOrg?: UserOrganizationInfo;
-  accessToken?: string;
-  refreshToken?: string;
-  expiresAt?: string;
+}
+
+// Legacy compatibility: SaaS mode does not switch organizations.
+export interface SwitchOrganizationRequest {
+  orgId: string;
 }

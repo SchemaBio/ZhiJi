@@ -1,3 +1,7 @@
-export default function TasksLayout({ children }: { children: React.ReactNode }) {
+export default function AnalysisLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return <>{children}</>;
 }

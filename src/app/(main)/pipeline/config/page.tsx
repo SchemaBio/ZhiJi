@@ -1,173 +1,212 @@
 'use client';
+import { isFamilyAnalysisUnavailable } from '@/lib/analysis-availability';
+import { errorText } from '@/i18n/errors';
 
-import { PageContent } from '@/components/layout';
-import { Button, Input, Select, FormItem } from '@schema/ui-kit';
-import { Save } from 'lucide-react';
+import { useText } from '@/i18n/useText';
+import { pipelineDisplayName } from '@/lib/builtin-resources';
+import { oncologyPipelineLabel } from '@/lib/oncology-pipelines';
+import { chineseText, translateUI, type TextTranslator } from '@/i18n/text';
+
+import { ActionButton as Button } from '@/components/shared/ActionButton';
+
+
 import * as React from 'react';
+import { PageContent } from '@/components/layout';
+import { Select } from '@schema/ui-kit';
+import { Tag } from '@/components/shared/Tag';
+import { AlertCircle, Database, Settings } from 'lucide-react';
+import { listPipelines, type Pipeline } from '@/lib/pipelines';
+import { EmptyState } from '@/components/shared';
+
+const BASE_TYPE_LABEL: Record<string, string> = {
+  wes_single: 'WES 单样本分析',
+  wes_family: 'WES 家系分析',
+  panel: 'Panel 分析',
+};
+
+function uniqueValues(values: string[]): string[] {
+  return Array.from(new Set(values.map(value => value.trim()).filter(Boolean))).sort();
+}
 
 export default function PipelineConfigPage() {
-  const [config, setConfig] = React.useState({
-    defaultBed: 'Agilent_SureSelect_V7.bed',
-    genomeVersion: 'hg38',
-    minDepth: '20',
-    minBaseQuality: '20',
-    minMappingQuality: '30',
-    variantCallers: ['gatk', 'deepvariant'],
-    cnvEnabled: true,
-    svEnabled: false,
-    annotationDatabases: ['gnomad', 'clinvar', 'hgmd', 'omim'],
-  });
+  const t = useText();
+  const [pipelines, setPipelines] = React.useState<Pipeline[]>([]);
+  const [selectedId, setSelectedId] = React.useState('');
+  const [loading, setLoading] = React.useState(true);
+  const [hasLoaded, setHasLoaded] = React.useState(false);
+  const [error, setError] = React.useState('');
 
-  const [saving, setSaving] = React.useState(false);
+  const loadPipelines = React.useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await listPipelines({ page: 1, pageSize: 100 });
+      setPipelines(data);
+      setHasLoaded(true);
+      setSelectedId(current => current && data.some(item => item.id === current) ? current : data[0]?.id ?? '');
+    } catch (err) {
+      setError(err instanceof Error ? errorText(err, t) : t("pipeline.unableToLoadPipelineSettings1430d3"));
+    } finally {
+      setLoading(false);
+    }
+  }, [t]);
 
-  const handleSave = async () => {
-    setSaving(true);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    setSaving(false);
-    alert('配置已保存');
-  };
+  React.useEffect(() => {
+    void loadPipelines();
+  }, [loadPipelines]);
+
+  const selected = pipelines.find(item => item.id === selectedId) ?? pipelines[0];
+  const bedFiles = uniqueValues(pipelines.map(item => item.bedFile));
+  const cnvBaselines = uniqueValues(pipelines.map(item => item.cnvBaseline));
+  const references = uniqueValues(pipelines.map(item => item.referenceGenome));
+  const activeCount = pipelines.filter(item => item.status === 'active').length;
 
   return (
-    <PageContent>
-      <h2 className="text-lg font-medium text-fg-default mb-4">流程配置</h2>
+    <PageContent className="yj-page-shell space-y-4">
+      <div className="yj-page-header">
+        <div>
+          <h2 className="yj-page-title">{t("pipeline.pipelineSettingsbaa6d3")}</h2>
+          <p className="yj-page-subtitle">{t("pipeline.reviewAnalysisPipelinesReferenceGenomesAndResourcef10912")}</p>
+        </div>
+        <Button action="refresh"
+          variant="secondary"
+          className="yj-tool-button"
 
-      <div className="max-w-2xl space-y-8">
-        {/* 基本配置 */}
-        <section>
-          <h3 className="text-sm font-medium text-fg-default mb-4 pb-2 border-b border-border">
-            基本配置
-          </h3>
-          <div className="space-y-4">
-            <FormItem label="默认 BED 文件">
-              <Select
-                options={[
-                  { value: 'Agilent_SureSelect_V7.bed', label: 'Agilent SureSelect V7' },
-                  { value: 'IDT_xGen_Exome_v2.bed', label: 'IDT xGen Exome v2' },
-                  { value: 'Cardio_Panel_v2.bed', label: 'Cardio Panel v2' },
-                ]}
-                value={config.defaultBed}
-                onChange={(v) => setConfig((prev) => ({ ...prev, defaultBed: v as string }))}
-              />
-            </FormItem>
-            <FormItem label="参考基因组版本">
-              <Select
-                options={[
-                  { value: 'hg38', label: 'GRCh38 (hg38)' },
-                  { value: 'hg19', label: 'GRCh37 (hg19)' },
-                ]}
-                value={config.genomeVersion}
-                onChange={(v) => setConfig((prev) => ({ ...prev, genomeVersion: v as string }))}
-              />
-            </FormItem>
-          </div>
-        </section>
+          onClick={() => void loadPipelines()}
+          disabled={loading}
+        >
+          {t("admin.refresh38108e")}</Button>
+      </div>
 
-        {/* 质控参数 */}
-        <section>
-          <h3 className="text-sm font-medium text-fg-default mb-4 pb-2 border-b border-border">
-            质控参数
-          </h3>
-          <div className="grid grid-cols-3 gap-4">
-            <FormItem label="最小测序深度">
-              <Input
-                type="number"
-                value={config.minDepth}
-                onChange={(e) => setConfig((prev) => ({ ...prev, minDepth: e.target.value }))}
-                rightElement={<span className="text-fg-muted text-xs">X</span>}
-              />
-            </FormItem>
-            <FormItem label="最小碱基质量">
-              <Input
-                type="number"
-                value={config.minBaseQuality}
-                onChange={(e) => setConfig((prev) => ({ ...prev, minBaseQuality: e.target.value }))}
-              />
-            </FormItem>
-            <FormItem label="最小比对质量">
-              <Input
-                type="number"
-                value={config.minMappingQuality}
-                onChange={(e) => setConfig((prev) => ({ ...prev, minMappingQuality: e.target.value }))}
-              />
-            </FormItem>
-          </div>
-        </section>
+      {error && (
+        <div role="alert" className="yj-panel border border-danger-muted bg-danger-subtle px-4 py-3 text-danger-fg flex items-start gap-2">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span className="min-w-0 break-words text-sm">{error}</span>
+        </div>
+      )}
 
-        {/* 变异检测 */}
-        <section>
-          <h3 className="text-sm font-medium text-fg-default mb-4 pb-2 border-b border-border">
-            变异检测
-          </h3>
-          <div className="space-y-4">
-            <FormItem label="SNV/InDel 检测工具">
-              <Select
-                options={[
-                  { value: 'gatk', label: 'GATK HaplotypeCaller' },
-                  { value: 'deepvariant', label: 'DeepVariant' },
-                  { value: 'strelka2', label: 'Strelka2' },
-                ]}
-                value={config.variantCallers}
-                onChange={(v) => setConfig((prev) => ({ ...prev, variantCallers: v as string[] }))}
-                multiple
-              />
-            </FormItem>
-            <div className="flex items-center gap-6">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={config.cnvEnabled}
-                  onChange={(e) => setConfig((prev) => ({ ...prev, cnvEnabled: e.target.checked }))}
-                  className="w-4 h-4 rounded border-border-default text-accent-emphasis focus:ring-accent-emphasis"
-                />
-                <span className="text-sm text-fg-default">启用 CNV 检测</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={config.svEnabled}
-                  onChange={(e) => setConfig((prev) => ({ ...prev, svEnabled: e.target.checked }))}
-                  className="w-4 h-4 rounded border-border-default text-accent-emphasis focus:ring-accent-emphasis"
-                />
-                <span className="text-sm text-fg-default">启用 SV 检测</span>
-              </label>
-            </div>
-          </div>
-        </section>
-
-        {/* 注释数据库 */}
-        <section>
-          <h3 className="text-sm font-medium text-fg-default mb-4 pb-2 border-b border-border">
-            注释数据库
-          </h3>
-          <FormItem label="启用的注释数据库">
-            <Select
-              options={[
-                { value: 'gnomad', label: 'gnomAD' },
-                { value: 'clinvar', label: 'ClinVar' },
-                { value: 'hgmd', label: 'HGMD' },
-                { value: 'omim', label: 'OMIM' },
-                { value: 'dbsnp', label: 'dbSNP' },
-                { value: 'spliceai', label: 'SpliceAI' },
-              ]}
-              value={config.annotationDatabases}
-              onChange={(v) => setConfig((prev) => ({ ...prev, annotationDatabases: v as string[] }))}
-              multiple
-            />
-          </FormItem>
-        </section>
-
-        {/* 保存按钮 */}
-        <div className="pt-4 border-t border-border">
-          <Button
-            variant="primary"
-            leftIcon={<Save className="w-4 h-4" />}
-            onClick={handleSave}
-            loading={saving}
-          >
-            保存配置
-          </Button>
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="yj-panel min-w-0 p-4">
+          <div className="text-xs text-fg-muted">{t("pipeline.totalPipelinescb2d36")}</div>
+          <div className="mt-2 text-2xl font-semibold text-fg-default">{!hasLoaded ? '—' : pipelines.length}</div>
+        </div>
+        <div className="yj-panel min-w-0 p-4">
+          <div className="text-xs text-fg-muted">{t("pipeline.enabledPipelines80fa57")}</div>
+          <div className="mt-2 text-2xl font-semibold text-success-fg">{!hasLoaded ? '—' : activeCount}</div>
+        </div>
+        <div className="yj-panel min-w-0 p-4">
+          <div className="text-xs text-fg-muted">{t("pipeline.referenceGenome903ba5")}</div>
+          <div className="mt-2 break-words text-sm text-fg-default">{!hasLoaded ? '—' : references.join(' / ') || '—'}</div>
+        </div>
+        <div className="yj-panel min-w-0 p-4">
+          <div className="text-xs text-fg-muted">{t("pipeline.bedReferences6c9e36")}</div>
+          <div className="mt-2 text-2xl font-semibold text-fg-default">{!hasLoaded ? '—' : bedFiles.length}</div>
         </div>
       </div>
+
+      {(!error || hasLoaded) && <div className="yj-panel p-5 space-y-6">
+        {loading && !hasLoaded ? (
+          <div className="flex items-center justify-center py-16">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent-emphasis" />
+          </div>
+        ) : pipelines.length === 0 ? (
+          <EmptyState
+            className="min-h-[220px]"
+            icon={<Settings />}
+            title={t("pipeline.noPipelineSettings837c2b")}
+            description={t("pipeline.createAnAnalysisPipelineInThePipeline541117")}
+          />
+        ) : (
+          <>
+            <section className="space-y-3">
+              <h3 className="text-sm font-medium text-fg-default pb-2 border-b border-border flex items-center gap-2">
+                <Settings className="w-4 h-4" />
+                {t("pipeline.currentPipelineac8056")}</h3>
+              <Select
+                value={selected?.id ?? ''}
+                onChange={(value) => setSelectedId(Array.isArray(value) ? value[0] : value)}
+                options={pipelines.map(item => ({
+                  value: item.id,
+                  disabled: isFamilyAnalysisUnavailable(item),
+                  label: `${pipelineDisplayName(item.id, item.name, t)}${item.planned ? ` · ${t('oncologyWorkflow.planned')}` : item.version ? ` (${item.version})` : ''}`,
+                }))}
+              />
+            </section>
+
+            {selected && (
+              <section className="space-y-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-base font-semibold text-fg-default">{pipelineDisplayName(selected.id, selected.name, t)}</h3>
+                  <Tag variant={selected.planned ? 'warning' : selected.status === 'active' && selected.resourceAvailable ? 'success' : 'neutral'}>
+                    {selected.planned ? t('oncologyWorkflow.planned') : selected.status === 'active' && selected.resourceAvailable ? t("admin.enabledd4e9ca") : t("admin.disabledd989e5")}
+                  </Tag>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                  <Info label={t("pipeline.pipelineId8c44a5")} value={selected.id} mono />
+                  <Info label={t("pipeline.basePipeline41689b")} value={BASE_TYPE_LABEL[selected.baseType] ? translateUI(BASE_TYPE_LABEL[selected.baseType], t) : oncologyPipelineLabel(selected.baseType, t)} />
+                  <Info label={t("pipeline.version989d1a")} value={selected.version || '-'} />
+                  <Info label={t("pipeline.referenceGenome903ba5")} value={selected.referenceGenome || '-'} />
+                  {!!selected.bedFile && <Info label={t("pipeline.bedFiles8ee058")} value={selected.bedFile} />}
+                  {!!selected.cnvBaseline && <Info label={t("pipeline.cnvBaselinefd84b0")} value={selected.cnvBaseline} />}
+                  <Info label={t("admin.createdAt84e380")} value={formatTime(selected.createdAt, t)} />
+                  <Info label={t("pipeline.updatedAt093dea")} value={formatTime(selected.updatedAt, t)} />
+                </div>
+                {selected.description && (
+                  <div>
+                    <div className="text-xs text-fg-muted">{t("admin.description412f54")}</div>
+                    <p className="mt-1 text-sm text-fg-default whitespace-pre-wrap">{selected.description}</p>
+                  </div>
+                )}
+              </section>
+            )}
+
+            {pipelines.length > 1 && <section className="space-y-3">
+              <h3 className="text-sm font-medium text-fg-default pb-2 border-b border-border flex items-center gap-2">
+                <Database className="w-4 h-4" />
+                {t("pipeline.configuredResourceReferencese4443b")}</h3>
+              <ResourceList title={t("pipeline.bedFiles8ee058")} values={bedFiles} />
+              <ResourceList title={t("pipeline.cnvBaselinefd84b0")} values={cnvBaselines} emptyText={t("pipeline.cnvBaselineNotConfigured686b34")} />
+            </section>}
+
+          </>
+        )}
+      </div>}
     </PageContent>
   );
+}
+
+function Info({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="min-w-0 border-b border-[var(--yj-border-subtle)] pb-3">
+      <div className="text-xs text-fg-muted">{label}</div>
+      <div className={`mt-1 text-sm text-fg-default break-all ${mono ? 'font-mono' : ''}`}>{value}</div>
+    </div>
+  );
+}
+
+function ResourceList({ title, values, emptyText: suppliedEmptyText }: { title: string; values: string[]; emptyText?: string }) {
+  const t = useText();
+  const emptyText = suppliedEmptyText ?? t("pipeline.noReferencesea524e");
+  return (
+    <div>
+      <div className="text-xs text-fg-muted mb-2">{title}</div>
+      {values.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {values.map(value => (
+            <span key={value} className="max-w-full break-all px-2 py-1 rounded bg-canvas-subtle text-xs font-mono text-fg-default">
+              {value}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div className="text-sm text-fg-muted">{emptyText}</div>
+      )}
+    </div>
+  );
+}
+
+function formatTime(value: string, t: TextTranslator = chineseText): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(t.locale, { hour12: false });
 }

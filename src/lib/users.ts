@@ -11,6 +11,7 @@ interface BackendUser {
   system_role?: string;
   systemRole?: string;
   org_id?: string;
+  orgId?: string;
   is_active?: boolean;
   isActive?: boolean;
   approval_status?: 'approved' | 'pending' | 'rejected';
@@ -26,7 +27,9 @@ interface UserListResponse {
   total?: number;
   page?: number;
   page_size?: number;
+  pageSize?: number;
   total_pages?: number;
+  totalPages?: number;
 }
 
 export interface UserListResult {
@@ -54,9 +57,20 @@ export interface CreateUserInput {
 
 function backendSystemRole(role: SystemRole): string {
   if (getRuntimeBackendFlavor() === 'loligo') {
-    return role === 'PLATFORM_ADMIN' || role === 'SUPER_ADMIN' ? 'SUPER_ADMIN' : 'USER';
+    return role === 'PLATFORM_ADMIN' ? 'SUPER_ADMIN' : 'USER';
   }
-  return role === 'SUPER_ADMIN' ? 'PLATFORM_ADMIN' : role === 'USER' ? 'ORG_USER' : role;
+  return role;
+}
+
+export async function createUser(input: CreateUserInput): Promise<User> {
+  const email = input.email.trim().toLowerCase();
+  const data = await api.post<BackendUser>('/v1/users', {
+    email, name: input.name.trim(),
+    password: await hashPassword(input.password, email),
+    system_role: backendSystemRole(input.systemRole),
+    ...(input.permissions !== undefined ? { permissions: input.permissions } : {}),
+  }, { coreApi: false });
+  return normalizeUser(data);
 }
 
 function mapSystemRole(role?: string): SystemRole {
@@ -70,7 +84,7 @@ export function normalizeUser(user: BackendUser): User {
     name: user.name,
     permissions: user.permissions ?? [],
     systemRole: mapSystemRole(user.system_role ?? user.systemRole),
-    orgId: user.org_id,
+    orgId: user.org_id ?? user.orgId,
     isActive: user.is_active ?? user.isActive ?? false,
     approvalStatus: user.approval_status ?? user.approvalStatus,
     createdAt: user.created_at ?? user.createdAt ?? '',
@@ -78,19 +92,12 @@ export function normalizeUser(user: BackendUser): User {
   };
 }
 
-export async function createUser(input: CreateUserInput): Promise<User> {
-  const email = input.email.trim().toLowerCase();
-  const data = await api.post<BackendUser>('/v1/users', {
-    email,
-    name: input.name.trim(),
-    password: await hashPassword(input.password, email),
-    system_role: backendSystemRole(input.systemRole),
-    ...(input.permissions !== undefined ? { permissions: input.permissions } : {}),
-  }, { coreApi: false });
-  return normalizeUser(data);
-}
-
-export async function listUsers(params: { page?: number; pageSize?: number; search?: string } = {}): Promise<UserListResult> {
+export async function listUsers(params: {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  orgId?: string;
+} = {}): Promise<UserListResult> {
   const page = params.page ?? 1;
   const pageSize = params.pageSize ?? 20;
   const data = await api.get<UserListResponse>('/v1/users', {
@@ -99,15 +106,17 @@ export async function listUsers(params: { page?: number; pageSize?: number; sear
       page: String(page),
       page_size: String(pageSize),
       ...(params.search ? { search: params.search } : {}),
+      ...(params.orgId ? { org_id: params.orgId } : {}),
     },
   });
+
   const items = (data.items ?? []).map(normalizeUser);
   return {
     items,
     total: data.total ?? items.length,
     page: data.page ?? page,
-    pageSize: data.page_size ?? pageSize,
-    totalPages: data.total_pages ?? 1,
+    pageSize: data.page_size ?? data.pageSize ?? pageSize,
+    totalPages: data.total_pages ?? data.totalPages ?? 1,
   };
 }
 
@@ -126,8 +135,13 @@ export async function deleteUser(id: string): Promise<void> {
 }
 
 export async function listPendingUsers(): Promise<User[]> {
-  const data = await api.get<BackendUser[] | { items?: BackendUser[] }>('/v1/users/pending', { coreApi: false });
-  const items = Array.isArray(data) ? data : data.items ?? [];
+  const data = await api.get<BackendUser[] | { users?: BackendUser[]; items?: BackendUser[] }>(
+    '/v1/users/pending',
+    { coreApi: false }
+  );
+  const items = Array.isArray(data)
+    ? data
+    : data.items ?? data.users ?? [];
   return items.map(normalizeUser);
 }
 

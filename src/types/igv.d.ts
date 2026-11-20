@@ -1,7 +1,14 @@
 declare module 'igv' {
+  export interface IGVTrackView {
+    track: {type?: string; height: number; autoHeight?: boolean; coverageTrackHeight?: number};
+    setTrackHeight(height: number, force?: boolean): void;
+  }
   export interface IGVBrowser {
+    trackViews?: IGVTrackView[];
     search(locus: string): Promise<void>;
-    loadTrack(config: TrackConfig): Promise<void>;
+    loadTrack(config: TrackConfig): Promise<unknown>;
+    updateViews(): Promise<void>;
+    currentLoci(): string | string[];
     removeTrackByName(name: string): void;
     toSVG(): string;
     dispose(): void;
@@ -10,8 +17,8 @@ declare module 'igv' {
   export interface TrackConfig {
     type: string;
     format?: string;
-    url?: string;
-    indexURL?: string;
+    url?: string | (() => Promise<string>);
+    indexURL?: string | (() => Promise<string>);
     name?: string;
     height?: number;
     [key: string]: any;
@@ -30,12 +37,23 @@ declare module 'igv' {
     [key: string]: any;
   }
 
-  export function createBrowser(
-    container: HTMLElement,
-    options: IGVOptions
-  ): Promise<IGVBrowser>;
+  const igv: {
+    createBrowser(container: HTMLElement, options: IGVOptions): Promise<IGVBrowser>;
+    removeBrowser(browser: IGVBrowser): void;
+    removeAllBrowsers(): void;
+  };
 
-  export function removeBrowser(browser: IGVBrowser): void;
+  export default igv;
+}
 
-  export function removeAllBrowsers(): void;
+declare module 'igv/dist/igv.esm.js' {
+  export type IGVBrowser = import('igv').IGVBrowser;
+  export type IGVTrackConfig = import('igv').TrackConfig;
+  export type IGVOptions = import('igv').IGVOptions;
+  const igv: {
+    createBrowser(container: HTMLElement, options: IGVOptions): Promise<IGVBrowser>;
+    removeBrowser(browser: IGVBrowser): void;
+    removeAllBrowsers(): void;
+  };
+  export default igv;
 }

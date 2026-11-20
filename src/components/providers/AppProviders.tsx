@@ -2,10 +2,11 @@
 
 import * as React from 'react';
 import { ThemeProvider } from '@schema/ui-kit';
-import { AuthProvider } from './AuthProvider';
-import { AIProvider } from './AIProvider';
-import { LocaleProvider } from './LocaleProvider';
+import { AIAssistanceProvider } from './AIAssistanceProvider';
+import { AuthProvider, useAuth } from './AuthProvider';
 import { UploadProvider } from './UploadProvider';
+import { LocaleProvider } from './LocaleProvider';
+import { setAssessmentCacheScope } from '@/lib/assessment/cache';
 import type { Locale } from '@/i18n/locales';
 
 interface AppProvidersProps {
@@ -13,16 +14,29 @@ interface AppProvidersProps {
   locale: Locale;
 }
 
+/**
+ * AppProviders wraps the application with all necessary providers.
+ * Includes ThemeProvider for theme management,
+ * AuthProvider for authentication,
+ * and AIAssistanceProvider for HPO extraction and evidence organization.
+ */
 export function AppProviders({ children, locale }: AppProvidersProps) {
   return (
     <LocaleProvider initialLocale={locale}>
-      <ThemeProvider defaultTheme="light" storageKey="somatic-theme">
-        <AuthProvider>
-          <UploadProvider>
-            <AIProvider>{children}</AIProvider>
-          </UploadProvider>
-        </AuthProvider>
-      </ThemeProvider>
+    <ThemeProvider defaultTheme="light" storageKey="germline-theme">
+      <AuthProvider>
+        <UploadProvider>
+          <AssistanceScope>{children}</AssistanceScope>
+        </UploadProvider>
+      </AuthProvider>
+    </ThemeProvider>
     </LocaleProvider>
   );
+}
+
+function AssistanceScope({ children }: { children: React.ReactNode }) {
+  const { user, currentOrg } = useAuth();
+  const scope = user ? `${user.id}:${currentOrg?.id ?? ''}` : 'anonymous';
+  React.useEffect(() => { setAssessmentCacheScope(scope); }, [scope]);
+  return <AIAssistanceProvider key={scope} scope={scope}>{children}</AIAssistanceProvider>;
 }

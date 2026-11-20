@@ -1,0 +1,71 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import * as React from 'react';
+import { api } from '@/lib/api';
+import { DEFAULT_FILTER_STATE } from '../types';
+import { ParquetColumnFilterBar } from './ParquetColumnFilterBar';
+import type { ResultTable } from '@/lib/assessment/types';
+import { resultColumnLabels } from './ResultColumnFilter';
+
+vi.mock('@/components/shared/ToolbarPopover', () => ({ ToolbarPopover: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
+vi.mock('@/lib/api',()=>({api:{get:vi.fn(),put:vi.fn()}}));
+vi.mock('@/lib/parquet-browser',()=>({retainBrowserTable:()=>()=>{},refreshBrowserTable:vi.fn().mockResolvedValue(undefined)}));
+
+describe('personal filter synchronization',()=>{
+  beforeEach(()=>vi.clearAllMocks());
+  const preset={...DEFAULT_FILTER_STATE,searchQuery:'GENE',page:5,columnFilters:[{column:'GnomAD_AF',operator:'lte' as const,value:'0.001'}]};
+  it.each<ResultTable>(['snv-indel', 'cnv-segment', 'cnv-exon', 'str', 'mei', 'mt', 'upd', 'roh'])('uses the visible label and excludes text in %s', table => {
+    const change = vi.fn();
+    const columnLabels = resultColumnLabels([{ id: 'gene', header: '基因', accessor: 'gene' }], { columns: ['Source_Gene'], columnAliases: { Source_Gene: ['gene'] } }, table);
+    const props = { table, columns: ['Source_Gene'], columnLabels, state: DEFAULT_FILTER_STATE, onChange: change };
+    const view = render(<ParquetColumnFilterBar {...props} />);
+    expect(screen.getByRole('option', { name: '基因' })).toHaveValue('Source_Gene');
+    fireEvent.change(screen.getByLabelText('筛选方式'), { target: { value: 'not_contains' } });
+    fireEvent.change(screen.getByLabelText('筛选值'), { target: { value: 'BRCA' } });
+    fireEvent.click(screen.getByRole('button', { name: '应用' }));
+    const next = change.mock.calls[0][0];
+    expect(next.columnFilters).toEqual([{ column: 'Source_Gene', operator: 'not_contains', value: 'BRCA' }]);
+    view.rerender(<ParquetColumnFilterBar {...props} state={next} />);
+    expect(screen.getByText('基因 不包含 BRCA')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '移除基因筛选' })).toBeInTheDocument();
+  });
+  it.each<ResultTable>(['snv-indel', 'cnv-segment', 'cnv-exon', 'str', 'mei', 'mt', 'upd', 'roh'])('does not offer CSV export for %s', async table => {
+    vi.mocked(api.get).mockResolvedValue([]);
+    render(<ParquetColumnFilterBar taskId="task" table={table} columns={['Gene']} state={DEFAULT_FILTER_STATE} onChange={vi.fn()} />);
+    await waitFor(() => expect(api.get).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: /导出/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '刷新修改' })).toBeInTheDocument();
+  });
+  it('does not offer server computation switching', async () => {
+    vi.mocked(api.get).mockResolvedValue([]);
+    render(<ParquetColumnFilterBar taskId="task" table="snv-indel" columns={[]} state={DEFAULT_FILTER_STATE} onChange={vi.fn()} />);
+    await waitFor(() => expect(api.get).toHaveBeenCalled());
+    expect(screen.queryByLabelText('筛选计算位置')).not.toBeInTheDocument();
+    expect(screen.queryByText('服务器兼容模式')).not.toBeInTheDocument();
+  });
+  it('restores a saved filter repeatedly and resets pagination',async()=>{
+    vi.mocked(api.get).mockResolvedValue([{name:'低频候选',stateJson:JSON.stringify(preset),version:3}]);
+    const change=vi.fn();
+    render(<ParquetColumnFilterBar taskId="task" table="snv-indel" columns={['Gene']} state={DEFAULT_FILTER_STATE} onChange={change}/>);
+    await screen.findByRole('option',{name:'低频候选'});
+    fireEvent.change(screen.getByLabelText('加载个人筛选方案'),{target:{value:'低频候选'}});
+    fireEvent.click(screen.getByRole('button',{name:'应用方案'}));
+    expect(change).toHaveBeenLastCalledWith({...preset,page:1});
+    fireEvent.click(screen.getByRole('button',{name:'应用方案'}));
+    expect(change).toHaveBeenCalledTimes(2);
+  });
+  it('saves structured personal state with a version and retains edits on conflict',async()=>{
+    vi.mocked(api.get).mockResolvedValue([{name:'低频候选',stateJson:JSON.stringify(preset),version:3}]);
+    vi.mocked(api.put).mockRejectedValueOnce(new Error('409 筛选方案已更新'));
+    const change=vi.fn();
+    render(<ParquetColumnFilterBar taskId="task" table="snv-indel" columns={['Gene']} state={preset} onChange={change}/>);
+    await screen.findByRole('option',{name:'低频候选'});
+    fireEvent.change(screen.getByLabelText('个人筛选方案名称'),{target:{value:'低频候选'}});
+    fireEvent.click(screen.getByRole('button',{name:'保存方案'}));
+    await screen.findByText('409 筛选方案已更新');
+    expect(api.put).toHaveBeenCalledWith(expect.stringContaining('/tables/snv-indel/views'),{name:'低频候选',state:{...preset,page:1},expectedVersion:3});
+    expect(screen.getByLabelText('个人筛选方案名称')).toHaveValue('低频候选');
+    await waitFor(()=>expect(screen.getByRole('button',{name:'保存方案'})).toBeEnabled());
+    expect(change).not.toHaveBeenCalled();
+  });
+});

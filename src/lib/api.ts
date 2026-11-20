@@ -4,7 +4,7 @@ import { getRuntimeApiBaseUrl, getRuntimeBackendFlavor, getRuntimeCoreApiPrefix,
 
 interface RequestOptions extends RequestInit {
   params?: Record<string, string>;
-  /** Internal escape hatch for Gateway-only endpoints that must not be routed through Onykia's Loligo proxy. */
+  /** Internal escape hatch for SaaS-only endpoints that must not be routed through Onykia's Loligo proxy. */
   coreApi?: boolean;
 }
 

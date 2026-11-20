@@ -1,21 +1,33 @@
 'use client';
+import { useText } from '@/i18n/useText';
+
+
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/providers/AuthProvider';
 
+/**
+ * Root page - redirects based on auth status
+ */
 export default function HomePage() {
+  const t = useText();
   const router = useRouter();
   const { isLoading, isAuthenticated } = useAuth();
 
   useEffect(() => {
     if (isLoading) return;
-    router.replace(isAuthenticated ? '/dashboard' : '/login');
+    if (isAuthenticated) {
+      router.replace('/dashboard');
+    } else {
+      router.replace('/login');
+    }
   }, [isAuthenticated, isLoading, router]);
 
+  // 显示加载状态
   return (
-    <div className="flex min-h-screen items-center justify-center bg-canvas-subtle">
-      <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-accent-emphasis" role="status" aria-label="正在加载" />
+    <div className="yj-modern yj-public-shell flex items-center justify-center">
+      <div className="yj-public-spinner" role="status" aria-label={t("common.loading3667cb")} />
     </div>
   );
 }
